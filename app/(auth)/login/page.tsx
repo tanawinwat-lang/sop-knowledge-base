@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Sparkles, Lock, Mail, ArrowRight, ShieldCheck, UserCheck, Headphones } from 'lucide-react';
+import { Sparkles, Lock, Mail, ArrowRight } from 'lucide-react';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -35,10 +35,7 @@ export default function LoginPage() {
     }
   };
 
-  const quickLogin = (userEmail: string) => {
-    setEmail(userEmail);
-    setPassword('password123');
-  };
+
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4 relative overflow-hidden">
@@ -110,35 +107,7 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {/* Quick Demo Test Accounts Switcher */}
-        <div className="mt-8 pt-6 border-t border-slate-800 space-y-3">
-          <p className="text-[11px] font-bold tracking-wider text-slate-400 uppercase text-center">
-            คลิกทดสอบในบทบาทต่างๆ (Demo Test Accounts):
-          </p>
-          <div className="grid grid-cols-3 gap-2">
-            <button
-              onClick={() => quickLogin('admin@company.com')}
-              className="p-2.5 bg-slate-800 hover:bg-purple-900/30 border border-slate-700 hover:border-purple-500/50 rounded-xl text-center transition-all group"
-            >
-              <ShieldCheck className="w-4 h-4 text-purple-400 mx-auto mb-1 group-hover:scale-110 transition-transform" />
-              <p className="text-[11px] font-semibold text-purple-300">Admin</p>
-            </button>
-            <button
-              onClick={() => quickLogin('sup@company.com')}
-              className="p-2.5 bg-slate-800 hover:bg-blue-900/30 border border-slate-700 hover:border-blue-500/50 rounded-xl text-center transition-all group"
-            >
-              <UserCheck className="w-4 h-4 text-blue-400 mx-auto mb-1 group-hover:scale-110 transition-transform" />
-              <p className="text-[11px] font-semibold text-blue-300">Supervisor</p>
-            </button>
-            <button
-              onClick={() => quickLogin('agent@company.com')}
-              className="p-2.5 bg-slate-800 hover:bg-emerald-900/30 border border-slate-700 hover:border-emerald-500/50 rounded-xl text-center transition-all group"
-            >
-              <Headphones className="w-4 h-4 text-emerald-400 mx-auto mb-1 group-hover:scale-110 transition-transform" />
-              <p className="text-[11px] font-semibold text-emerald-300">Agent</p>
-            </button>
-          </div>
-        </div>
+
       </div>
     </div>
   );
