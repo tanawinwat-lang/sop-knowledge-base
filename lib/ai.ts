@@ -68,7 +68,7 @@ export function analyzeSOPMatch(query: string, results: SearchResult[]): {
       (matchedTags > 0 ? 2 : 0)
     ));
 
-    let reason = reasonParts.length > 0 
+    const reason = reasonParts.length > 0 
       ? reasonParts.join(' • ')
       : '';
 

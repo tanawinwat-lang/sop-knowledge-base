@@ -29,7 +29,7 @@ export async function POST(req: Request) {
   const db = getDB();
   const now = new Date().toISOString();
   let successCount = 0;
-  let errorMessages: string[] = [];
+  const errorMessages: string[] = [];
 
   for (const rawId of ids) {
     const id = parseInt(rawId, 10);
