@@ -171,7 +171,12 @@ const DB_FILE = path.join(process.cwd(), 'data', 'database.json');
 const BACKUP_DIR = path.join(process.cwd(), 'data', 'backup');
 const BACKUP_RETENTION_DAYS = 7;
 
+// Vercel check — when deployed to Vercel, file system is read-only
+// Use in-memory storage initialized from seed data
+const IS_VERCEL = process.env.VERCEL === '1';
+
 // In-memory cache: avoids redundant file reads within the same request
+// On Vercel, persists within a single serverless instance via globalThis
 let dbCache: DBData | null = null;
 
 // Export cache clearer for restore operations
@@ -224,6 +229,7 @@ export function getNextId(type: 'sop' | 'announcement' | 'audit' | 'category' | 
 }
 
 function ensureDataDirectory() {
+  if (IS_VERCEL) return; // No file system on Vercel
   const dir = path.dirname(DB_FILE);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -231,12 +237,14 @@ function ensureDataDirectory() {
 }
 
 function ensureBackupDir() {
+  if (IS_VERCEL) return;
   if (!fs.existsSync(BACKUP_DIR)) {
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
   }
 }
 
 export function cleanupOldBackups() {
+  if (IS_VERCEL) return;
   try {
     const cutoff = Date.now() - BACKUP_RETENTION_DAYS * 24 * 60 * 60 * 1000;
     if (!fs.existsSync(BACKUP_DIR)) return;
@@ -260,6 +268,7 @@ export function cleanupOldBackups() {
 }
 
 export function createBackup() {
+  if (IS_VERCEL) return; // No file-based backups on Vercel
   if (!fs.existsSync(DB_FILE)) return;
   ensureBackupDir();
   try {
@@ -267,7 +276,6 @@ export function createBackup() {
     const backupPath = path.join(BACKUP_DIR, `database-${timestamp}.json`);
     fs.copyFileSync(DB_FILE, backupPath);
     console.log(`[Backup] Created: database-${timestamp}.json`);
-    // Cleanup old backups after each scheduled backup
     cleanupOldBackups();
   } catch {
     console.error('[Backup] Failed to create backup');
@@ -275,34 +283,27 @@ export function createBackup() {
 }
 
 // ====== Scheduled Daily Backup at 22:00 ======
-// Runs on server start; calculates ms until next 22:00 and sets a timeout.
-// After backup completes, schedules the next day's backup.
 function scheduleDailyBackup() {
+  if (IS_VERCEL) return; // No backup scheduling on Vercel
   const now = new Date();
   const target = new Date(now);
-  target.setHours(22, 0, 0, 0); // 22:00:00.000
-
+  target.setHours(22, 0, 0, 0);
   if (now.getTime() >= target.getTime()) {
-    // If it's already past 22:00 today, schedule for tomorrow
     target.setDate(target.getDate() + 1);
   }
-
   const msUntilNext = target.getTime() - now.getTime();
-
   setTimeout(() => {
     console.log('[Backup] Running scheduled daily backup at 22:00...');
     createBackup();
-    // Schedule next day
     scheduleDailyBackup();
   }, msUntilNext);
-
   const hours = Math.floor(msUntilNext / (1000 * 60 * 60));
   const minutes = Math.floor((msUntilNext % (1000 * 60 * 60)) / (1000 * 60));
   console.log(`[Backup] Next scheduled backup in ${hours}h ${minutes}m (at 22:00)`);
 }
 
 // Initialize scheduled backup on module load (server start)
-if (typeof process !== 'undefined' && process.env.NEXT_RUNTIME !== 'edge') {
+if (typeof process !== 'undefined' && process.env.NEXT_RUNTIME !== 'edge' && !IS_VERCEL) {
   scheduleDailyBackup();
 }
 
@@ -606,8 +607,16 @@ function getInitialSeedData(): DBData {
 }
 
 export function getDB(): DBData {
-  // Return cached version if available (avoids redundant file reads per request)
+  // Return cached version if available
   if (dbCache) return dbCache;
+
+  // On Vercel: use in-memory only, initialized from seed data
+  if (IS_VERCEL) {
+    console.warn('[DB] Running on Vercel — data is ephemeral (in-memory only, seed data)');
+    const seed = getInitialSeedData();
+    dbCache = seed;
+    return seed;
+  }
 
   ensureDataDirectory();
   if (!fs.existsSync(DB_FILE)) {
@@ -754,7 +763,9 @@ export function getDB(): DBData {
     return data;
   } catch {
     const seed = getInitialSeedData();
-    fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf-8');
+    if (!IS_VERCEL) {
+      fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf-8');
+    }
     return seed;
   }
 }
@@ -763,9 +774,11 @@ export function getDB(): DBData {
 const ALL_ROUTES = ['/dashboard', '/sops', '/sops/new', '/sops/trash', '/approval', '/feedback', '/announcements', '/settings/password', '/settings/users', '/settings/permissions', '/settings/backups', '/settings/audit-logs'];
 
 export function saveDB(data: DBData): void {
-  ensureDataDirectory();
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
-  dbCache = data; // Update cache
+  if (!IS_VERCEL) {
+    ensureDataDirectory();
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  }
+  dbCache = data; // Update cache (always, even on Vercel)
 }
 
 export function logAudit(userId: number, username: string, action: string, target: string, details: string, ip: string = '127.0.0.1') {
