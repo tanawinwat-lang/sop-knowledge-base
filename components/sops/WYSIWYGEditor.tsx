@@ -168,14 +168,83 @@ export function WYSIWYGEditor({ value, onChange, onOpenAICopilot }: WYSIWYGEdito
     setLinkText('');
   };
 
+  // Compress image client-side before upload
+  // - Resize to max 1920px width/height
+  // - Compress JPEG to 80% quality
+  // - Max output ~500KB (avoids server limits, faster upload, less storage)
+  const compressImage = async (file: File): Promise<File> => {
+    return new Promise((resolve, reject) => {
+      // Skip compression for SVG and GIF (animated formats)
+      if (file.type === 'image/svg+xml' || file.type === 'image/gif') {
+        return resolve(file);
+      }
+
+      const url = URL.createObjectURL(file);
+      const domImg = new window.Image();
+
+      domImg.onload = () => {
+        URL.revokeObjectURL(url);
+
+        // Calculate new dimensions (max 1920px on longest side — good for documentation)
+        const MAX_DIM = 1920;
+        let { width, height } = domImg;
+        if (width > MAX_DIM || height > MAX_DIM) {
+          if (width > height) {
+            height = Math.round((height / width) * MAX_DIM);
+            width = MAX_DIM;
+          } else {
+            width = Math.round((width / height) * MAX_DIM);
+            height = MAX_DIM;
+          }
+        }
+
+        // Draw to canvas and compress
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(domImg, 0, 0, width, height);
+
+        // Convert to blob with compression
+        // Note: quality parameter is only effective for JPEG, ignored for PNG
+        const useJpeg = !['image/png', 'image/webp'].includes(file.type);
+        const outputType = useJpeg ? 'image/jpeg' : file.type;
+        const quality = 0.8;
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) return resolve(file);
+            const compressedFile = new File([blob], file.name, { type: outputType });
+            // If compressed is larger than original, keep original
+            resolve(compressedFile.size < file.size ? compressedFile : file);
+          },
+          outputType,
+          quality
+        );
+      };
+
+      domImg.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('ไม่สามารถอ่านไฟล์รูปภาพได้'));
+      };
+
+      domImg.src = url;
+    });
+  };
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsUploading(true);
     try {
+      // Step 1: Compress image client-side
+      const compressedFile = await compressImage(file);
+      const savedSize = ((file.size - compressedFile.size) / file.size * 100).toFixed(0);
+      console.log(`[Upload] Compressed: ${(file.size / 1024).toFixed(0)}KB → ${(compressedFile.size / 1024).toFixed(0)}KB (${savedSize}% saved)`);
+
+      // Step 2: Upload compressed image
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', compressedFile);
       formData.append('alignment', imageAlignment);
 
       const res = await fetch('/api/sops/upload-image', {
@@ -183,13 +252,14 @@ export function WYSIWYGEditor({ value, onChange, onOpenAICopilot }: WYSIWYGEdito
         body: formData,
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}: ${res.statusText}`);
 
       const alt = imageAltText || file.name.replace(/\.[^/.]+$/, '');
       insertImageMarkdown(data.url, alt);
       resetImageDialog();
     } catch (err: any) {
-      alert(err.message || 'อัปโหลดรูปภาพไม่สำเร็จ');
+      alert('❌ ' + (err.message || 'อัปโหลดรูปภาพไม่สำเร็จ'));
+      console.error('[Upload Error]', err);
     } finally {
       setIsUploading(false);
     }
