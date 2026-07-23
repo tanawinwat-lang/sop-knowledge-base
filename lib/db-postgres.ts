@@ -19,8 +19,9 @@ function getPool(): Pool {
     pool = new Pool({
       connectionString: DB_URL,
       max: 1,                // 1 connection per serverless instance
-      idleTimeoutMillis: 5000, // close idle connections after 5s
-      connectionTimeoutMillis: 10000, // timeout after 10s
+      idleTimeoutMillis: 30000, // close idle connections after 30s
+      connectionTimeoutMillis: 30000, // timeout after 30s (Neon cold-start can take 10s+)
+      allowExitOnIdle: true,
     });
     pool.on('error', (err) => {
       console.error('[PostgreSQL] Pool error:', err.message);
@@ -50,7 +51,7 @@ export function loadDBFromPostgresSync(): DBData | null {
     const script = `
 const { Client } = require('pg');
 const url = ${JSON.stringify(DB_URL)};
-const client = new Client(url);
+const client = new Client({ connectionString: url, connectionTimeoutMillis: 30000 });
 client.connect().then(() => {
   return client.query('SELECT snapshot_data FROM db_snapshots ORDER BY updated_at DESC LIMIT 1');
 }).then(r => {
@@ -64,7 +65,7 @@ client.connect().then(() => {
 });
 `;
     const output = execFileSync('node', ['-e', script], {
-      timeout: 15000,
+      timeout: 30000,
       encoding: 'utf-8',
       maxBuffer: 50 * 1024 * 1024, // 50MB for large JSON
       windowsHide: true,
