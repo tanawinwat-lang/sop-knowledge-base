@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
-import { writeFile, mkdir } from 'fs/promises';
-import path from 'path';
 
 export async function POST(req: Request) {
   const user = await getCurrentUser();
@@ -30,33 +28,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'ไฟล์รูปภาพต้องมีขนาดไม่เกิน 10MB' }, { status: 400 });
     }
 
+    // Convert file to base64 data URL (works on Vercel readonly filesystem)
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
+    const base64 = buffer.toString('base64');
+    const mimeType = file.type;
+    const dataUrl = `data:${mimeType};base64,${base64}`;
 
-    // Generate unique filename
-    const timestamp = Date.now();
-    const random = Math.random().toString(36).substring(2, 8);
-    const ext = file.name.split('.').pop() || 'png';
-    const filename = `sop-image-${timestamp}-${random}.${ext}`;
-
-    // Save to public/uploads/sops/
-    const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'sops');
-    const filepath = path.join(uploadDir, filename);
-
-    try {
-      await mkdir(uploadDir, { recursive: true });
-    } catch {}
-
-    await writeFile(filepath, buffer);
-
-    // Return the public URL
-    const url = `/uploads/sops/${filename}`;
+    const alt = file.name.replace(/\.[^/.]+$/, '');
 
     return NextResponse.json({
-      url,
-      filename,
+      url: dataUrl,
+      filename: file.name,
       alignment,
-      markdown: `![${file.name.replace(/\.[^/.]+$/, '')}](${url}){:align="${alignment}"}`,
+      markdown: `![${alt}](${dataUrl}){:align="${alignment}"}`,
     });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
