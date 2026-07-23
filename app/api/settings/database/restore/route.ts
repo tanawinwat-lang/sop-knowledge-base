@@ -34,17 +34,14 @@ export async function POST(req: Request) {
       }, { status: 404 });
     }
 
-    // Clear cache so getDB() will re-read
-    clearDBCache();
-
-    // Store the URL so future sync works
-    const db = getDB();
-    db.db_config = {
+    // Attach config to the PG data and SAVE it directly
+    pgData.db_config = {
       db_url,
       pg_connected: true,
       last_sync_at: new Date().toISOString(),
     };
-    saveDB(db);
+    saveDB(pgData);
+    clearDBCache();
 
     // Count what we restored
     const restored = {
