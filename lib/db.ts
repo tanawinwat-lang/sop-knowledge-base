@@ -173,9 +173,13 @@ const DB_FILE = path.join(process.cwd(), 'data', 'database.json');
 const BACKUP_DIR = path.join(process.cwd(), 'data', 'backup');
 const BACKUP_RETENTION_DAYS = 7;
 
-// Vercel check — when deployed to Vercel, file system is read-only
-// Use PostgreSQL if available, otherwise in-memory storage initialized from seed data
+// Platform checks:
+// - Vercel: file system is read-only, use PostgreSQL
+// - Render free tier: file system is ephemeral (wiped on restart), use PostgreSQL
+// - Local/VPS: use database.json (persistent disk)
 const IS_VERCEL = process.env.VERCEL === '1';
+const IS_RENDER = process.env.RENDER === '1';
+const NO_PERSISTENT_FS = IS_VERCEL || IS_RENDER; // No permanent filesystem
 const HAS_DATABASE_URL = !!process.env.DATABASE_URL;
 
 // Track PG loading state — prevents redundant async load attempts
@@ -235,7 +239,7 @@ export function getNextId(type: 'sop' | 'announcement' | 'audit' | 'category' | 
 }
 
 function ensureDataDirectory() {
-  if (IS_VERCEL) return; // No file system on Vercel
+  if (NO_PERSISTENT_FS) return; // No persistent file system
   const dir = path.dirname(DB_FILE);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -243,14 +247,14 @@ function ensureDataDirectory() {
 }
 
 function ensureBackupDir() {
-  if (IS_VERCEL) return;
+  if (NO_PERSISTENT_FS) return;
   if (!fs.existsSync(BACKUP_DIR)) {
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
   }
 }
 
 export function cleanupOldBackups() {
-  if (IS_VERCEL) return;
+  if (NO_PERSISTENT_FS) return;
   try {
     const cutoff = Date.now() - BACKUP_RETENTION_DAYS * 24 * 60 * 60 * 1000;
     if (!fs.existsSync(BACKUP_DIR)) return;
@@ -274,7 +278,7 @@ export function cleanupOldBackups() {
 }
 
 export function createBackup() {
-  if (IS_VERCEL) return; // No file-based backups on Vercel
+  if (NO_PERSISTENT_FS) return; // No file-based backups without persistent disk
   if (!fs.existsSync(DB_FILE)) return;
   ensureBackupDir();
   try {
@@ -290,7 +294,7 @@ export function createBackup() {
 
 // ====== Scheduled Daily Backup at 22:00 ======
 function scheduleDailyBackup() {
-  if (IS_VERCEL) return; // No backup scheduling on Vercel
+  if (NO_PERSISTENT_FS) return; // No backup scheduling without persistent disk
   const now = new Date();
   const target = new Date(now);
   target.setHours(22, 0, 0, 0);
@@ -309,7 +313,7 @@ function scheduleDailyBackup() {
 }
 
 // Initialize scheduled backup on module load (server start)
-if (typeof process !== 'undefined' && process.env.NEXT_RUNTIME !== 'edge' && !IS_VERCEL) {
+if (typeof process !== 'undefined' && process.env.NEXT_RUNTIME !== 'edge' && !NO_PERSISTENT_FS) {
   scheduleDailyBackup();
 }
 
@@ -616,8 +620,9 @@ export function getDB(): DBData {
   // Return cached version if available
   if (dbCache) return dbCache;
 
-  // On Vercel: use PostgreSQL if available, otherwise in-memory seed
-  if (IS_VERCEL) {
+  // On platforms without persistent filesystem (Vercel, Render free):
+  // use PostgreSQL if available, otherwise in-memory seed
+  if (NO_PERSISTENT_FS) {
     if (HAS_DATABASE_URL) {
       // STEP 1: Try synchronous PG load first (blocks until data arrives or timeout)
       // This ensures cold start returns REAL data from PostgreSQL, not seed data
@@ -847,7 +852,7 @@ export function getDB(): DBData {
     // No backup available — create fresh seed data (data loss unavoidable)
     console.error('[DB] No valid backup found — falling back to seed data. Data loss occurred!');
     const seed = getInitialSeedData();
-    if (!IS_VERCEL) {
+    if (!NO_PERSISTENT_FS) {
       fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf-8');
     }
     return seed;
@@ -897,8 +902,8 @@ function tryRecoverFromBackup(): DBData | null {
 const ALL_ROUTES = ['/dashboard', '/sops', '/sops/new', '/sops/trash', '/approval', '/feedback', '/announcements', '/settings/password', '/settings/users', '/settings/permissions', '/settings/backups', '/settings/audit-logs'];
 
 export function saveDB(data: DBData): void {
-  if (!IS_VERCEL) {
-    // Local dev: atomic write (temp file -> verify -> rename)
+  if (!NO_PERSISTENT_FS) {
+    // Local/VPS: atomic write (temp file -> verify -> rename)
     // Prevents database corruption if the server crashes mid-write
     ensureDataDirectory();
     const tmpFile = DB_FILE + '.tmp';
@@ -908,7 +913,8 @@ export function saveDB(data: DBData): void {
     JSON.parse(verify); // Throw on invalid JSON — prevents rename of corrupted file
     fs.renameSync(tmpFile, DB_FILE); // Atomic rename (same filesystem)
   } else if (HAS_DATABASE_URL) {
-    // On Vercel with PostgreSQL: persist immediately (fire-and-forget)
+    // On cloud platforms without persistent disk (Vercel, Render free):
+    // persist to PostgreSQL
     saveDBToPostgres(data).catch(err =>
       console.error('[DB] Failed to persist to PostgreSQL:', err)
     );
@@ -918,7 +924,7 @@ export function saveDB(data: DBData): void {
 
 // Async version for explicit waits
 export async function saveDBAsync(data: DBData): Promise<void> {
-  if (!IS_VERCEL) {
+  if (!NO_PERSISTENT_FS) {
     ensureDataDirectory();
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
   } else if (HAS_DATABASE_URL) {
