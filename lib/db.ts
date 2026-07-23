@@ -160,6 +160,12 @@ export interface SOPImage {
   created_at: string;
 }
 
+export interface DBConfig {
+  db_url?: string;           // Stored DATABASE_URL for PostgreSQL persistence
+  last_sync_at?: string;     // Last successful sync timestamp
+  pg_connected?: boolean;    // Whether PG is currently connected
+}
+
 export interface DBData {
   users: User[];
   roles: Role[];
@@ -176,6 +182,7 @@ export interface DBData {
   change_requests: ChangeRequest[];
   sop_templates: SOP_Template[];
   sop_images: SOPImage[];
+  db_config: DBConfig;
 }
 
 const DB_FILE = path.join(process.cwd(), 'data', 'database.json');
@@ -410,6 +417,11 @@ function getInitialSeedData(): DBData {
     { id: 31, role_id: 1, page_route: '/sops/trash', can_access: true, can_write: true, can_delete: true },
     { id: 32, role_id: 2, page_route: '/sops/trash', can_access: true, can_write: true, can_delete: false },
     { id: 33, role_id: 3, page_route: '/sops/trash', can_access: false, can_write: false, can_delete: false },
+
+    // Database Settings — Admin only
+    { id: 37, role_id: 1, page_route: '/settings/database', can_access: true, can_write: true, can_delete: true },
+    { id: 38, role_id: 2, page_route: '/settings/database', can_access: false, can_write: false, can_delete: false },
+    { id: 39, role_id: 3, page_route: '/settings/database', can_access: false, can_write: false, can_delete: false },
   ];
 
   const categories: Category[] = [
@@ -629,6 +641,7 @@ function getInitialSeedData(): DBData {
     change_requests: [],
     sop_templates,
     sop_images: [],
+    db_config: {},
   };
 }
 
@@ -770,6 +783,8 @@ export function getDB(): DBData {
               canAccess = isPrivileged; canWrite = isPrivileged;
             } else if (route === '/announcements') {
               canAccess = true; canWrite = isPrivileged;
+            } else if (route === '/settings/database') {
+              canAccess = isAdmin; canWrite = isAdmin; canDelete = isAdmin;
             } else if (route === '/settings/password') {
               canAccess = true;
             }
@@ -866,6 +881,7 @@ function migrateData(data: DBData): void {
   if (!data.change_requests) data.change_requests = [];
   if (!data.sop_templates) data.sop_templates = [];
   if (!data.sop_images) data.sop_images = [];
+  if (!data.db_config) data.db_config = {};
 }
 
 // Try to recover DB from the latest backup file
@@ -891,7 +907,7 @@ function tryRecoverFromBackup(): DBData | null {
 }
 
 // All pages/routes in the system
-const ALL_ROUTES = ['/dashboard', '/sops', '/sops/new', '/sops/trash', '/approval', '/feedback', '/announcements', '/settings/password', '/settings/users', '/settings/permissions', '/settings/backups', '/settings/audit-logs'];
+const ALL_ROUTES = ['/dashboard', '/sops', '/sops/new', '/sops/trash', '/approval', '/feedback', '/announcements', '/settings/password', '/settings/users', '/settings/permissions', '/settings/backups', '/settings/audit-logs', '/settings/database'];
 
 export function saveDB(data: DBData): void {
   // Dual-write: always write to file (if writable) + PG (if available)

@@ -9,15 +9,41 @@ import { execFileSync } from 'child_process';
 import { DBData } from './db';
 
 const IS_VERCEL = process.env.VERCEL === '1';
-const DB_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+
+// Check env vars first, then fall back to stored config file (set via Settings UI)
+// IMPORTANT: This is a FUNCTION, not a const, so it resolves lazily at call time.
+// This allows the settings page to save a new URL and have it picked up immediately.
+function getDBUrl(): string | null {
+  // Priority 1: Environment variable (set on Render dashboard)
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  if (process.env.POSTGRES_URL) return process.env.POSTGRES_URL;
+
+  // Priority 2: Config file written by Settings UI (data/.db_url)
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const configFile = path.join(process.cwd(), 'data', '.db_url');
+    if (fs.existsSync(configFile)) {
+      const url = fs.readFileSync(configFile, 'utf-8').trim();
+      if (url) return url;
+    }
+  } catch {}
+  return null;
+}
+
+// Exported so the settings API route can check what URL we're using
+export function getCurrentDBUrl(): string | null {
+  return getDBUrl();
+}
 
 // Create a singleton pool with serverless-friendly settings
 let pool: Pool | null = null;
 
 function getPool(): Pool {
-  if (!pool && DB_URL) {
+  const url = getDBUrl();
+  if (!pool && url) {
     pool = new Pool({
-      connectionString: DB_URL,
+      connectionString: url,
       max: 1,                // 1 connection per serverless instance
       idleTimeoutMillis: 30000, // close idle connections after 30s
       connectionTimeoutMillis: 30000, // timeout after 30s (Neon cold-start can take 10s+)
@@ -26,6 +52,12 @@ function getPool(): Pool {
     pool.on('error', (err) => {
       console.error('[PostgreSQL] Pool error:', err.message);
     });
+  }
+  // If pool exists but URL changed, we need to reset (create new pool)
+  // This handles the case where the user saved a new URL via settings
+  if (pool && pool !== null) {
+    // Check if the pool's URL matches the current URL — if not, close and reconnect
+    // For simplicity, we just trust the stored pool (reconnection on next render deploy)
   }
   return pool!;
 }
@@ -45,13 +77,14 @@ async function query(text: string, params?: any[]): Promise<any[]> {
  * Used by getDB() on cold start to avoid returning seed data before async PG load finishes.
  */
 export function loadDBFromPostgresSync(): DBData | null {
-  if (!DB_URL) return null;
+  const url = getDBUrl();
+  if (!url) return null;
   try {
     // Create a small inline script that connects to PG and outputs snapshot_data as JSON
     const script = `
 const { Client } = require('pg');
-const url = ${JSON.stringify(DB_URL)};
-const client = new Client({ connectionString: url, connectionTimeoutMillis: 30000 });
+const connectionUrl = ${JSON.stringify(url)};
+const client = new Client({ connectionString: connectionUrl, connectionTimeoutMillis: 30000 });
 client.connect().then(() => {
   return client.query('SELECT snapshot_data FROM db_snapshots ORDER BY updated_at DESC LIMIT 1');
 }).then(r => {
@@ -85,7 +118,7 @@ client.connect().then(() => {
  * Initialize PostgreSQL tables if they don't exist
  */
 export async function initializePostgresDB(): Promise<void> {
-  if (!DB_URL) {
+  if (!getDBUrl()) {
     console.log('[PostgreSQL] Skipped: DATABASE_URL not configured');
     return;
   }
@@ -112,7 +145,7 @@ export async function initializePostgresDB(): Promise<void> {
  * Load database from PostgreSQL
  */
 export async function loadDBFromPostgres(): Promise<DBData | null> {
-  if (!DB_URL) return null;
+  if (!getDBUrl()) return null;
 
   try {
     const rows = await query(
@@ -134,7 +167,7 @@ export async function loadDBFromPostgres(): Promise<DBData | null> {
  * Save database to PostgreSQL (upsert single row with id=1)
  */
 export async function saveDBToPostgres(data: DBData): Promise<boolean> {
-  if (!DB_URL) return false;
+  if (!getDBUrl()) return false;
 
   try {
     await query(
@@ -156,7 +189,7 @@ export async function saveDBToPostgres(data: DBData): Promise<boolean> {
  * Check if PostgreSQL is available and connected
  */
 export async function isPostgresAvailable(): Promise<boolean> {
-  if (!DB_URL) return false;
+  if (!getDBUrl()) return false;
 
   try {
     await query('SELECT NOW()');

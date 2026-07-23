@@ -21,6 +21,7 @@ import {
   KeyRound,
   Trash2,
   HardDrive,
+  Database,
 } from 'lucide-react';
 interface SidebarProps {
   userRole: 'ADMIN' | 'SUPERVISOR' | 'AGENT';
@@ -99,6 +100,7 @@ export function Sidebar({ userRole, username, pagePermissions = [], isOpenMobile
     { label: 'ตั้งค่ารหัสผ่าน', href: '/settings/password', icon: KeyRound, show: hasPageAccess('/settings/password') },
     { label: 'จัดการผู้ใช้งาน & ตำแหน่ง', href: '/settings/users', icon: Users, show: hasPageAccess('/settings/users') },
     { label: 'จัดการสิทธิ์ระบบ (RBAC)', href: '/settings/permissions', icon: ShieldCheck, show: hasPageAccess('/settings/permissions') },
+    { label: 'ตั้งค่าฐานข้อมูล (DB)', href: '/settings/database', icon: Database, show: hasPageAccess('/settings/database') },
     { label: 'จัดการ Backup', href: '/settings/backups', icon: HardDrive, show: hasPageAccess('/settings/audit-logs') },
     { label: 'บันทึกระบบ (Audit Logs)', href: '/settings/audit-logs', icon: History, show: hasPageAccess('/settings/audit-logs') },
   ];
