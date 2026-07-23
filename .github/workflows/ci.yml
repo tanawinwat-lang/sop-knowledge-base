@@ -22,10 +22,15 @@ jobs:
           cache: 'npm'
 
       - name: 📦 Install dependencies
-        run: npm ci
+        run: npm ci --legacy-peer-deps
 
       - name: 📝 Create env file for CI
-        run: cp .env.example .env.local
+        run: |
+          if [ -f .env.example ]; then
+            cp .env.example .env.local
+          else
+            echo "JWT_SECRET=sop-knowledge-base-super-secret-key-2026" > .env.local
+          fi
 
       - name: 🧹 Run ESLint
         run: npm run lint

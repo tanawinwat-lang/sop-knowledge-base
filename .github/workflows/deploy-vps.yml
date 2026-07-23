@@ -18,31 +18,52 @@ jobs:
     #   JWT_SECRET:    Optional JWT secret (uses default if not set)
 
     steps:
+      - name: 🔍 Check required secrets
+        id: check_secrets
+        run: |
+          if [ -z "${{ secrets.VPS_HOST }}" ]; then
+            echo "❌ VPS_HOST not set — skipping deploy"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          elif [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "❌ SSH_PRIVATE_KEY not set — skipping deploy"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "✅ All required secrets available"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: 📥 Checkout code
+        if: steps.check_secrets.outputs.skip == 'false'
         uses: actions/checkout@v4
 
       - name: ⚙️ Setup Node.js 20
+        if: steps.check_secrets.outputs.skip == 'false'
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
 
       - name: 📦 Install dependencies
+        if: steps.check_secrets.outputs.skip == 'false'
         run: npm ci --legacy-peer-deps
 
       - name: 📝 Create env file
+        if: steps.check_secrets.outputs.skip == 'false'
         run: |
           cat > .env.local << EOF
           JWT_SECRET=${{ secrets.JWT_SECRET || 'sop-knowledge-base-super-secret-key-2026' }}
           EOF
 
       - name: 🏗️ Build project
+        if: steps.check_secrets.outputs.skip == 'false'
         run: npm run build
 
       - name: 🔧 Install rsync (for file sync)
+        if: steps.check_secrets.outputs.skip == 'false'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq rsync
 
       - name: 🔑 Setup SSH
+        if: steps.check_secrets.outputs.skip == 'false'
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
@@ -50,6 +71,7 @@ jobs:
           ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
 
       - name: 🚀 Deploy to VPS
+        if: steps.check_secrets.outputs.skip == 'false'
         env:
           VPS_USER: ${{ secrets.VPS_USERNAME || 'ubuntu' }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -72,8 +94,6 @@ jobs:
             ./ ${VPS_USER}@${VPS_HOST}:${APP_DIR}/
 
           # Build and restart on VPS
-          # Note: Using unquoted ENDSSH so $VPS_USER expands locally,
-          # while remote $ signs (like $PATH) must be escaped as \$PATH
           echo "⚙️ Building and restarting on VPS..."
           ssh ${VPS_USER}@${VPS_HOST} << ENDSSH
             set -e
@@ -109,6 +129,7 @@ jobs:
           ENDSSH
 
       - name: ✅ Health Check
+        if: steps.check_secrets.outputs.skip == 'false'
         env:
           VPS_USER: ${{ secrets.VPS_USERNAME || 'ubuntu' }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -127,3 +148,9 @@ jobs:
           done
           echo "⚠️ Health check did not confirm 200, but deploy completed."
           echo "   Check: ssh ${VPS_USER}@${VPS_HOST} 'pm2 logs sop-knowledge-base --nostream --lines 20'"
+
+      - name: ✅ Skip message
+        if: steps.check_secrets.outputs.skip == 'true'
+        run: |
+          echo "ℹ️ VPS deploy skipped — VPS_HOST or SSH_PRIVATE_KEY not configured."
+          echo "   To enable VPS deploy, set these secrets in GitHub → Settings → Secrets and variables → Actions"
