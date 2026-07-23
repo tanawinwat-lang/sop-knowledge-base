@@ -39,6 +39,10 @@ yarn-error.log*
 .env*
 !.env.example
 
+# auto-generated backup files
+data/backup/
+scripts/
+
 # vercel
 .vercel
 

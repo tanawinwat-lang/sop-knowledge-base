@@ -178,9 +178,8 @@ const BACKUP_RETENTION_DAYS = 7;
 const IS_VERCEL = process.env.VERCEL === '1';
 const HAS_DATABASE_URL = !!process.env.DATABASE_URL;
 
-// Track if we've tried to initialize PostgreSQL
-let pgInitialized = false;
-let pgAvailable = false;
+// Track PG loading state — prevents redundant async load attempts
+let _pgLoadStarted = false;
 
 // In-memory cache: avoids redundant file reads within the same request
 // On Vercel, persists within a single serverless instance via globalThis
@@ -620,52 +619,51 @@ export function getDB(): DBData {
   // On Vercel: use PostgreSQL if available, otherwise in-memory seed
   if (IS_VERCEL) {
     if (HAS_DATABASE_URL) {
-      // Try to load from PostgreSQL (async, but we use cached result on next call)
-      console.log('[DB] Vercel + DATABASE_URL detected — will load from PostgreSQL');
-      // Ensure table exists before loading
-      initializePostgresDB().then(() => {
-        loadDBFromPostgres().then((pgData) => {
-          // 🛡️ Guard: if saveDB() already wrote newer data, don't overwrite cache
-          if (dbCache !== null) {
-            console.log('[DB] Cache already has newer data, skipping PG load callback');
-            return;
-          }
-          if (pgData) {
-            console.log('[DB] Loaded data from PostgreSQL');
-            // Apply backward-compatibility migrations to PG data
-            if (!pgData.announcements) pgData.announcements = [];
-            if (!pgData.announcement_reads) pgData.announcement_reads = [];
-            if (!pgData.announcement_comments) pgData.announcement_comments = [];
-            pgData.announcements.forEach((a: any) => { if (!a.attachments) a.attachments = []; });
-            pgData.sops.forEach((s: any) => { if (!s.attachments) s.attachments = []; });
-            pgData.users.forEach((u: any) => { if (u.is_active === undefined) u.is_active = true; });
-            if (!pgData.tag_library) pgData.tag_library = [];
-            if (!pgData.trash_sops) pgData.trash_sops = [];
-            if (!pgData.change_requests) pgData.change_requests = [];
-            if (!pgData.sop_templates) pgData.sop_templates = [];
-            initMaxIds(pgData);
-            dbCache = pgData;
-          } else {
-            console.log('[DB] No data in PostgreSQL, will seed and save');
-            const seed = getInitialSeedData();
-            initMaxIds(seed);
-            dbCache = seed;
-            // Persist seed to PostgreSQL asynchronously
-            saveDBToPostgres(seed).catch(err =>
-              console.error('[DB] Failed to persist seed to PostgreSQL:', err)
-            );
-          }
-        }).catch((err) => {
-          console.error('[DB] PostgreSQL load failed, using seed:', err);
-          if (dbCache !== null) return; // saveDB already wrote newer data
-          const seed = getInitialSeedData();
-          initMaxIds(seed);
-          dbCache = seed;
-        });
-      });
-      // Return seed data while PG loads async — next call will use cached PG data
+      // Start async PG load ONCE per serverless instance
+      if (!_pgLoadStarted) {
+        _pgLoadStarted = true;
+        console.log('[DB] Starting async PostgreSQL load...');
+        initializePostgresDB()
+          .then(() => loadDBFromPostgres())
+          .then((pgData) => {
+            if (pgData) {
+              console.log('[DB] Loaded data from PostgreSQL');
+              // Apply backward-compatibility migrations to PG data
+              if (!pgData.announcements) pgData.announcements = [];
+              if (!pgData.announcement_reads) pgData.announcement_reads = [];
+              if (!pgData.announcement_comments) pgData.announcement_comments = [];
+              pgData.announcements.forEach((a: any) => { if (!a.attachments) a.attachments = []; });
+              pgData.sops.forEach((s: any) => { if (!s.attachments) s.attachments = []; });
+              pgData.users.forEach((u: any) => { if (u.is_active === undefined) u.is_active = true; });
+              if (!pgData.tag_library) pgData.tag_library = [];
+              if (!pgData.trash_sops) pgData.trash_sops = [];
+              if (!pgData.change_requests) pgData.change_requests = [];
+              if (!pgData.sop_templates) pgData.sop_templates = [];
+              initMaxIds(pgData);
+              dbCache = pgData;
+            } else {
+              console.log('[DB] No data in PostgreSQL, will seed and save');
+              const seed = getInitialSeedData();
+              initMaxIds(seed);
+              dbCache = seed;
+              saveDBToPostgres(seed).catch(err =>
+                console.error('[DB] Failed to persist seed to PostgreSQL:', err)
+              );
+            }
+          })
+          .catch((err) => {
+            console.error('[DB] PostgreSQL init/load failed, using seed:', err);
+            if (!dbCache) {
+              const seed = getInitialSeedData();
+              initMaxIds(seed);
+              dbCache = seed;
+            }
+          });
+      }
+      // Cache seed temporarily until PG data arrives
       const seed = getInitialSeedData();
       initMaxIds(seed);
+      dbCache = seed;
       return seed;
     }
     console.warn('[DB] Running on Vercel without DATABASE_URL — data is ephemeral (in-memory only, seed data)');
