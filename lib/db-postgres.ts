@@ -70,8 +70,8 @@ export async function saveDBToPostgres(data: DBData): Promise<boolean> {
 
   try {
     await sql`
-      INSERT INTO db_snapshots (snapshot_data, created_at, updated_at) 
-      VALUES (${JSON.stringify(data)}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      INSERT INTO db_snapshots (id, snapshot_data, created_at, updated_at) 
+      VALUES (1, ${JSON.stringify(data)}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       ON CONFLICT (id) DO UPDATE SET 
         snapshot_data = ${JSON.stringify(data)},
         updated_at = CURRENT_TIMESTAMP
