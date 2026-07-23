@@ -48,6 +48,7 @@ export async function POST(req: Request) {
       '/settings/password',
       '/settings/users',
       '/settings/permissions',
+      '/settings/backups',
       '/settings/audit-logs',
     ];
 

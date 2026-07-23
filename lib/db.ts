@@ -761,12 +761,58 @@ export function getDB(): DBData {
 
     dbCache = data;
     return data;
-  } catch {
+  } catch (readError) {
+    // File is corrupted — try to recover from latest backup before falling back to seed
+    console.error('[DB] Database file corrupted, attempting recovery from backup...', readError);
+    const recovered = tryRecoverFromBackup();
+    if (recovered) {
+      console.log('[DB] Successfully recovered database from backup');
+      // Apply backward-compatibility migrations to recovered data (same as try block)
+      if (!recovered.announcements) recovered.announcements = [];
+      if (!recovered.announcement_reads) recovered.announcement_reads = [];
+      if (!recovered.announcement_comments) recovered.announcement_comments = [];
+      recovered.announcements.forEach((a: any) => { if (!a.attachments) a.attachments = []; });
+      recovered.sops.forEach((s: any) => { if (!s.attachments) s.attachments = []; });
+      recovered.users.forEach((u: any) => { if (u.is_active === undefined) u.is_active = true; });
+      if (!recovered.tag_library) recovered.tag_library = [];
+      if (!recovered.trash_sops) recovered.trash_sops = [];
+      if (!recovered.change_requests) recovered.change_requests = [];
+      if (!recovered.sop_templates) recovered.sop_templates = [];
+      // Initialize ID counters so getNextId() doesn't return duplicate IDs!
+      initMaxIds(recovered);
+      dbCache = recovered;
+      return recovered;
+    }
+    // No backup available — create fresh seed data (data loss unavoidable)
+    console.error('[DB] No valid backup found — falling back to seed data. Data loss occurred!');
     const seed = getInitialSeedData();
     if (!IS_VERCEL) {
       fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf-8');
     }
     return seed;
+  }
+}
+
+// Try to recover DB from the latest backup file
+function tryRecoverFromBackup(): DBData | null {
+  try {
+    ensureBackupDir();
+    if (!fs.existsSync(BACKUP_DIR)) return null;
+    const files = fs.readdirSync(BACKUP_DIR)
+      .filter(f => f.endsWith('.json') && f.startsWith('database-'))
+      .sort()
+      .reverse();
+    if (files.length === 0) return null;
+    const latestBackup = path.join(BACKUP_DIR, files[0]);
+    const raw = fs.readFileSync(latestBackup, 'utf-8');
+    const data = JSON.parse(raw) as DBData;
+    // Restore the backup as the main database file
+    fs.copyFileSync(latestBackup, DB_FILE);
+    console.log(`[DB] Recovered from backup: ${files[0]}`);
+    return data;
+  } catch (backupError) {
+    console.error('[DB] Backup recovery failed:', backupError);
+    return null;
   }
 }
 
@@ -776,7 +822,15 @@ const ALL_ROUTES = ['/dashboard', '/sops', '/sops/new', '/sops/trash', '/approva
 export function saveDB(data: DBData): void {
   if (!IS_VERCEL) {
     ensureDataDirectory();
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    // Atomic write: write to temp file first, then rename
+    // This prevents database corruption if the server crashes mid-write
+    const tmpFile = DB_FILE + '.tmp';
+    const jsonStr = JSON.stringify(data, null, 2);
+    fs.writeFileSync(tmpFile, jsonStr, 'utf-8');
+    // Verify the temp file was written correctly by reading it back
+    const verify = fs.readFileSync(tmpFile, 'utf-8');
+    JSON.parse(verify); // Throw on invalid JSON — prevents rename of corrupted file
+    fs.renameSync(tmpFile, DB_FILE); // Atomic rename (same filesystem)
   }
   dbCache = data; // Update cache (always, even on Vercel)
 }
