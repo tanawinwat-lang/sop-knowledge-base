@@ -152,6 +152,14 @@ export interface SOP_Template {
   created_at: string;
 }
 
+export interface SOPImage {
+  id: number;
+  filename: string;
+  mime_type: string;
+  data_base64: string;
+  created_at: string;
+}
+
 export interface DBData {
   users: User[];
   roles: Role[];
@@ -167,6 +175,7 @@ export interface DBData {
   tag_library: TagLibrary[];
   change_requests: ChangeRequest[];
   sop_templates: SOP_Template[];
+  sop_images: SOPImage[];
 }
 
 const DB_FILE = path.join(process.cwd(), 'data', 'database.json');
@@ -211,6 +220,7 @@ let _nextFeedbackId = 0;
 let _nextPermId = 0;
 let _nextChangeRequestId = 0;
 let _nextTemplateId = 0;
+let _nextSopImageId = 0;
 
 function initMaxIds(data: DBData) {
   if (_maxIdInitialized) return;
@@ -223,10 +233,11 @@ function initMaxIds(data: DBData) {
   _nextPermId = data.page_permissions.length ? Math.max(...data.page_permissions.map((p) => p.id)) : 0;
   _nextChangeRequestId = data.change_requests.length ? Math.max(...data.change_requests.map((c) => c.id)) : 0;
   _nextTemplateId = data.sop_templates.length ? Math.max(...data.sop_templates.map((t) => t.id)) : 0;
+  _nextSopImageId = data.sop_images?.length ? Math.max(...data.sop_images.map((i) => i.id)) : 0;
   _maxIdInitialized = true;
 }
 
-export function getNextId(type: 'sop' | 'announcement' | 'audit' | 'category' | 'tag' | 'feedback' | 'permission' | 'change_request' | 'sop_template'): number {
+export function getNextId(type: 'sop' | 'announcement' | 'audit' | 'category' | 'tag' | 'feedback' | 'permission' | 'change_request' | 'sop_template' | 'sop_image'): number {
   switch (type) {
     case 'sop': return ++_nextSopId;
     case 'announcement': return ++_nextAnnId;
@@ -237,6 +248,7 @@ export function getNextId(type: 'sop' | 'announcement' | 'audit' | 'category' | 
     case 'permission': return ++_nextPermId;
     case 'change_request': return ++_nextChangeRequestId;
     case 'sop_template': return ++_nextTemplateId;
+    case 'sop_image': return ++_nextSopImageId;
     default: return 0;
   }
 }
@@ -616,6 +628,7 @@ function getInitialSeedData(): DBData {
     tag_library: tagLibrary,
     change_requests: [],
     sop_templates,
+    sop_images: [],
   };
 }
 
@@ -852,6 +865,7 @@ function migrateData(data: DBData): void {
   if (!data.trash_sops) data.trash_sops = [];
   if (!data.change_requests) data.change_requests = [];
   if (!data.sop_templates) data.sop_templates = [];
+  if (!data.sop_images) data.sop_images = [];
 }
 
 // Try to recover DB from the latest backup file

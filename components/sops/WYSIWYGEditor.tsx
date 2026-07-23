@@ -254,8 +254,14 @@ export function WYSIWYGEditor({ value, onChange, onOpenAICopilot }: WYSIWYGEdito
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}: ${res.statusText}`);
 
-      const alt = imageAltText || file.name.replace(/\.[^/.]+$/, '');
-      insertImageMarkdown(data.url, alt);
+      // Use compact markdown from server (e.g., ![alt](@sopimg:123){:align="center"})
+      // This keeps the editor content clean instead of storing huge base64 strings
+      if (data.markdown) {
+        insertText(data.markdown);
+      } else {
+        const alt = imageAltText || file.name.replace(/\.[^/.]+$/, '');
+        insertImageMarkdown(data.url, alt);
+      }
       resetImageDialog();
     } catch (err: any) {
       alert('❌ ' + (err.message || 'อัปโหลดรูปภาพไม่สำเร็จ'));

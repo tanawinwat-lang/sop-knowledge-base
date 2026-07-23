@@ -413,7 +413,7 @@ export default function SOPDetailPage({ params }: { params: Promise<{ id: string
 
         {/* Main Document Body */}
         <div className="p-6 md:p-8 bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl space-y-4">
-          {renderFormattedContent(sop.content)}
+          {renderFormattedContent(sop.content.replace(/@sopimg:(\d+)/g, '/api/sops/image/$1'))}
 
           {/* SOP Attachments */}
           {sop.attachments && sop.attachments.length > 0 && (
