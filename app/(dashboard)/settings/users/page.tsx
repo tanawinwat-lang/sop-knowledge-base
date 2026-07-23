@@ -363,6 +363,7 @@ export default function UserManagementPage() {
                 <th className="p-4">ผู้ใช้งาน (User)</th>
                 <th className="p-4">อีเมล (Email)</th>
                 <th className="p-4">ตำแหน่ง (Role / Position)</th>
+                <th className="p-4">วันที่สร้าง (Created)</th>
                 <th className="p-4 text-center">สถานะ (Status)</th>
                 <th className="p-4 text-center">การจัดการ (Actions)</th>
               </tr>
@@ -370,7 +371,7 @@ export default function UserManagementPage() {
             <tbody className="divide-y divide-slate-800 font-sans">
               {isLoading ? (
                 <tr>
-                  <td colSpan={5} className="p-8 text-center text-slate-400">
+                  <td colSpan={6} className="p-8 text-center text-slate-400">
                     กำลังโหลดข้อมูล...
                   </td>
                 </tr>
@@ -401,6 +402,15 @@ export default function UserManagementPage() {
                           </option>
                         ))}
                       </select>
+                    </td>
+                    <td className={`p-4 text-xs ${u.is_active === false ? 'text-slate-600' : 'text-slate-400'}`}>
+                      {new Date(u.created_at).toLocaleDateString('th-TH', { 
+                        year: 'numeric', 
+                        month: '2-digit', 
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
                     </td>
                     <td className="p-4 text-center">
                       <button

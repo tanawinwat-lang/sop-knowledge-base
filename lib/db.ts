@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcryptjs';
+import { loadDBFromPostgres, saveDBToPostgres, isPostgresAvailable } from './db-postgres';
+import { setPendingWrite } from './db-context';
 
 export interface User {
   id: number;
@@ -172,8 +174,13 @@ const BACKUP_DIR = path.join(process.cwd(), 'data', 'backup');
 const BACKUP_RETENTION_DAYS = 7;
 
 // Vercel check — when deployed to Vercel, file system is read-only
-// Use in-memory storage initialized from seed data
+// Use PostgreSQL if available, otherwise in-memory storage initialized from seed data
 const IS_VERCEL = process.env.VERCEL === '1';
+const HAS_DATABASE_URL = !!process.env.DATABASE_URL;
+
+// Track if we've tried to initialize PostgreSQL
+let pgInitialized = false;
+let pgAvailable = false;
 
 // In-memory cache: avoids redundant file reads within the same request
 // On Vercel, persists within a single serverless instance via globalThis
@@ -821,18 +828,34 @@ const ALL_ROUTES = ['/dashboard', '/sops', '/sops/new', '/sops/trash', '/approva
 
 export function saveDB(data: DBData): void {
   if (!IS_VERCEL) {
+    // Local dev: atomic write (temp file -> verify -> rename)
+    // Prevents database corruption if the server crashes mid-write
     ensureDataDirectory();
-    // Atomic write: write to temp file first, then rename
-    // This prevents database corruption if the server crashes mid-write
     const tmpFile = DB_FILE + '.tmp';
     const jsonStr = JSON.stringify(data, null, 2);
     fs.writeFileSync(tmpFile, jsonStr, 'utf-8');
-    // Verify the temp file was written correctly by reading it back
     const verify = fs.readFileSync(tmpFile, 'utf-8');
     JSON.parse(verify); // Throw on invalid JSON — prevents rename of corrupted file
     fs.renameSync(tmpFile, DB_FILE); // Atomic rename (same filesystem)
+  } else if (HAS_DATABASE_URL) {
+    // On Vercel with PostgreSQL: mark as pending write (request-scoped flush)
+    setPendingWrite(data);
   }
-  dbCache = data; // Update cache (always, even on Vercel)
+  dbCache = data; // Update cache immediately
+}
+
+// Async version for explicit waits
+export async function saveDBAsync(data: DBData): Promise<void> {
+  if (!IS_VERCEL) {
+    ensureDataDirectory();
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  } else if (HAS_DATABASE_URL) {
+    const saved = await saveDBToPostgres(data);
+    if (!saved) {
+      console.error('[DB] Failed to persist to PostgreSQL');
+    }
+  }
+  dbCache = data;
 }
 
 export function logAudit(userId: number, username: string, action: string, target: string, details: string, ip: string = '127.0.0.1') {

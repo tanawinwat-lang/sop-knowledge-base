@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getDB, saveDB, logAudit, User } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth';
 import { canAccessPage } from '@/lib/rbac';
+import { ensurePersisted } from '@/lib/db-context';
 import bcrypt from 'bcryptjs';
 
 export async function GET() {
@@ -74,6 +75,7 @@ export async function POST(req: Request) {
       `สร้างผู้ใช้ใหม่: ${username} (${email}) ในตำแหน่ง ${role?.role_name}`
     );
 
+    await ensurePersisted();
     return NextResponse.json({
       user: {
         id: newUser.id,
@@ -85,6 +87,7 @@ export async function POST(req: Request) {
       },
     });
   } catch (err: any) {
+    await ensurePersisted();
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

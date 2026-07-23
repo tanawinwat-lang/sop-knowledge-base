@@ -3,6 +3,7 @@ import { getDB, saveDB, logAudit, SOP, generateSimpleEmbedding, getNextId } from
 import { getCurrentUser } from '@/lib/auth';
 import { filterSOPsForRole, canAccessPage, canWritePage } from '@/lib/rbac';
 import { createSOPAnnouncement } from '@/lib/announcement';
+import { ensurePersisted } from '@/lib/db-context';
 
 export async function GET(req: Request) {
   const user = await getCurrentUser();
@@ -88,8 +89,10 @@ export async function POST(req: Request) {
       createSOPAnnouncement(user.id, 'CREATED', title, newId);
     }
 
+    await ensurePersisted();
     return NextResponse.json({ sop: newSOP });
   } catch (err: any) {
+    await ensurePersisted();
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
