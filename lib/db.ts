@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcryptjs';
+import { loadDBFromPostgres, saveDBToPostgres, isPostgresAvailable } from './db-postgres';
 
 export interface User {
   id: number;
@@ -172,8 +173,13 @@ const BACKUP_DIR = path.join(process.cwd(), 'data', 'backup');
 const BACKUP_RETENTION_DAYS = 7;
 
 // Vercel check — when deployed to Vercel, file system is read-only
-// Use in-memory storage initialized from seed data
+// Use PostgreSQL if available, otherwise in-memory storage initialized from seed data
 const IS_VERCEL = process.env.VERCEL === '1';
+const HAS_DATABASE_URL = !!process.env.DATABASE_URL;
+
+// Track if we've tried to initialize PostgreSQL
+let pgInitialized = false;
+let pgAvailable = false;
 
 // In-memory cache: avoids redundant file reads within the same request
 // On Vercel, persists within a single serverless instance via globalThis
@@ -777,8 +783,14 @@ export function saveDB(data: DBData): void {
   if (!IS_VERCEL) {
     ensureDataDirectory();
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  } else if (HAS_DATABASE_URL) {
+    // On Vercel with PostgreSQL: attempt async save in background
+    // Don't block the request, just queue it
+    saveDBToPostgres(data).catch(err => {
+      console.error('[DB] Failed to save to PostgreSQL:', err);
+    });
   }
-  dbCache = data; // Update cache (always, even on Vercel)
+  dbCache = data; // Update cache (always)
 }
 
 export function logAudit(userId: number, username: string, action: string, target: string, details: string, ip: string = '127.0.0.1') {
