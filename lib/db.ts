@@ -639,6 +639,8 @@ export function getDB(): DBData {
               if (!pgData.trash_sops) pgData.trash_sops = [];
               if (!pgData.change_requests) pgData.change_requests = [];
               if (!pgData.sop_templates) pgData.sop_templates = [];
+              // Reset ID counters so PG data's IDs (from other instances) take precedence
+              _maxIdInitialized = false;
               initMaxIds(pgData);
               dbCache = pgData;
             } else {
