@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { getDB, saveDB } from '@/lib/db';
@@ -63,14 +65,12 @@ export async function POST(req: Request) {
     };
     saveDB(db);
 
-    // Also try to save to a separate file as a more reliable persistence mechanism (not ephemeral on some platforms)
+    // Also try to save to a separate file for persistence across process restarts
     try {
-      const fs = require('fs');
-      const path = require('path');
       const configFile = path.join(process.cwd(), 'data', '.db_url');
       fs.writeFileSync(configFile, db_url, 'utf-8');
     } catch (e) {
-      // Ignore file write errors
+      // Ignore file write errors (e.g., read-only filesystem on Vercel)
     }
 
     // Try to initialize PG and sync data
@@ -128,8 +128,6 @@ export async function DELETE() {
 
   // Also clear the file
   try {
-    const fs = require('fs');
-    const path = require('path');
     const configFile = path.join(process.cwd(), 'data', '.db_url');
     if (fs.existsSync(configFile)) fs.unlinkSync(configFile);
   } catch (e) {
