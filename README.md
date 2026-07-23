@@ -143,9 +143,10 @@ npm run dev
 | สภาพแวดล้อม | วิธีเก็บข้อมูล |
 |---|---|
 | **Local Dev / VPS** | `data/database.json` (ไฟล์ JSON ถาวร) |
-| Vercel + PostgreSQL | PostgreSQL ผ่าน `lib/db-postgres.ts` |
+| Vercel + PostgreSQL | PostgreSQL ผ่าน `lib/db-postgres.ts`| **Render + Neon PostgreSQL** | `database.json` + PostgreSQL (Dual-Write + Auto-Sync ทุก 60s) |
+| **Local Dev / VPS** | `data/database.json` (ไฟล์ JSON ถาวร) |
 
-**VPS ใช้ `database.json`** — ไม่ต้องติดตั้ง PostgreSQL, ไม่มีข้อมูลหาย, ไม่มี Connection Timeout!
+ข้อมูลถูก Sync ไป PostgreSQL อัตโนมัติทุกครั้งที่มีการเปลี่ยนแปลง + ทุก 60 วินาที — ปลอดภัยแม้ Container จะถูกรีสตาร์ท!
 
 ### Auto Backup
 - ทำงานอัตโนมัติทุกวันเวลา **22:00 น.**
