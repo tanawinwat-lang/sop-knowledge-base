@@ -2,6 +2,10 @@
  * PostgreSQL/Neon adapter for persistent data storage on Vercel
  * Uses pg Pool with direct DATABASE_URL connection (not @vercel/postgres)
  * Falls back to JSON file on local development
+ *
+ * IMPORTANT: Pool is initialized EAGERLY at module load time when DATABASE_URL is available.
+ * This ensures the Neon cold-start connection is established BEFORE the first saveDB() call,
+ * preventing silent sync failures on the first write.
  */
 
 import { Pool } from 'pg';
@@ -36,38 +40,66 @@ export function getCurrentDBUrl(): string | null {
   return getDBUrl();
 }
 
-// Create a singleton pool with serverless-friendly settings
+// ===== EAGER POOL INITIALIZATION =====
+// Create pool at module load time so Neon cold-start is handled BEFORE any saveDB() call.
+// If getDBUrl() returns null (no DATABASE_URL), pool stays null and PG features are disabled.
 let pool: Pool | null = null;
 
-function getPool(): Pool {
+function initPool(): void {
   const url = getDBUrl();
-  if (!pool && url) {
-    pool = new Pool({
-      connectionString: url,
-      max: 1,                // 1 connection per serverless instance
-      idleTimeoutMillis: 30000, // close idle connections after 30s
-      connectionTimeoutMillis: 30000, // timeout after 30s (Neon cold-start can take 10s+)
-      allowExitOnIdle: true,
+  if (!url) return;
+  if (pool) return; // Already initialized
+
+  pool = new Pool({
+    connectionString: url,
+    max: 1,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 30000,
+    allowExitOnIdle: true,
+  });
+
+  pool.on('error', (err) => {
+    console.error('[PostgreSQL] Pool error:', err.message);
+  });
+
+  // Eager connect to handle Neon cold-start BEFORE first query
+  // This prevents the first saveDB() call from timing out
+  pool.connect().then(client => {
+    client.release();
+    console.log('[PostgreSQL] Pool connected successfully (eager init)');
+    // Eagerly create the db_snapshots table so first saveDBToPostgres() doesn't fail
+    pool!.query(`CREATE TABLE IF NOT EXISTS db_snapshots (
+      id SERIAL PRIMARY KEY,
+      snapshot_data JSONB NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );`).then(() => {
+      console.log('[PostgreSQL] Table db_snapshots ready (eager init)');
+    }).catch(err => {
+      console.error('[PostgreSQL] Eager table init failed:', err.message);
     });
-    pool.on('error', (err) => {
-      console.error('[PostgreSQL] Pool error:', err.message);
-    });
-  }
-  // If pool exists but URL changed, we need to reset (create new pool)
-  // This handles the case where the user saved a new URL via settings
-  if (pool && pool !== null) {
-    // Check if the pool's URL matches the current URL — if not, close and reconnect
-    // For simplicity, we just trust the stored pool (reconnection on next render deploy)
-  }
-  return pool!;
+  }).catch(err => {
+    console.error('[PostgreSQL] Eager connect failed (will retry on first query):', err.message);
+  });
 }
+
+function getPool(): Pool {
+  if (pool) return pool;
+  // Retry init in case DB URL was set after module load
+  initPool();
+  if (!pool) throw new Error('No database URL configured');
+  return pool;
+}
+
+// ===== EAGER INIT ON MODULE LOAD =====
+// This ensures the connection is warming up before any API request arrives
+initPool();
 
 /**
  * Execute a SQL query with parameterized values
  */
 async function query(text: string, params?: any[]): Promise<any[]> {
   const p = getPool();
-  if (!p) throw new Error('No database URL configured');
   const result = await p.query(text, params);
   return result.rows;
 }
@@ -80,7 +112,6 @@ export function loadDBFromPostgresSync(): DBData | null {
   const url = getDBUrl();
   if (!url) return null;
   try {
-    // Create a small inline script that connects to PG and outputs snapshot_data as JSON
     const script = `
 const { Client } = require('pg');
 const connectionUrl = ${JSON.stringify(url)};
@@ -100,7 +131,7 @@ client.connect().then(() => {
     const output = execFileSync('node', ['-e', script], {
       timeout: 30000,
       encoding: 'utf-8',
-      maxBuffer: 50 * 1024 * 1024, // 50MB for large JSON
+      maxBuffer: 50 * 1024 * 1024,
       windowsHide: true,
     });
     const trimmed = output.trim();
