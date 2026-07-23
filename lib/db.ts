@@ -196,7 +196,19 @@ const BACKUP_RETENTION_DAYS = 7;
 // - Render free: writable but ephemeral → file writes + PG (dual-write)
 // - Local/VPS: persistent disk → file writes + PG if available (dual-write)
 const IS_VERCEL = process.env.VERCEL === '1';
-const HAS_DATABASE_URL = !!process.env.DATABASE_URL;
+
+// Lazy check for DATABASE_URL — also checks data/.db_url file (set via Settings UI)
+// Must be a function so it picks up URL changes without module reload
+function hasDBUrl(): boolean {
+  // Fast path: env var set (Render Dashboard)
+  if (process.env.DATABASE_URL || process.env.POSTGRES_URL) return true;
+  // Fallback: config file written by in-app Settings
+  try {
+    const cfgPath = path.join(process.cwd(), 'data', '.db_url');
+    if (fs.existsSync(cfgPath) && fs.readFileSync(cfgPath, 'utf-8').trim()) return true;
+  } catch {}
+  return false;
+}
 
 // Whether the filesystem is writable at all (Vercel is the only read-only platform)
 const FS_WRITABLE = !IS_VERCEL;
@@ -656,7 +668,7 @@ export function getDB(): DBData {
 
   if (!FS_WRITABLE) {
     // Vercel: PG-only path
-    if (HAS_DATABASE_URL) {
+    if (hasDBUrl()) {
       console.log('[DB] Vercel: attempting sync PG load...');
       const syncData = loadDBFromPostgresSync();
       if (syncData) {
@@ -803,12 +815,8 @@ export function getDB(): DBData {
 
       dbCache = data;
 
-      // Step 2 (fire-and-forget): Sync this data to PostgreSQL if available
-      if (HAS_DATABASE_URL && !process.env.DISABLE_PG_SYNC) {
-        initializePostgresDB().then(() => {
-          saveDBToPostgres(data).catch(e => console.error('[DB] PG sync failed:', e));
-        });
-      }
+      // AUTO-SYNC: Fire-and-forget sync to PostgreSQL immediately on load
+      syncToPostgreSQL(data);
 
       return data;
     } catch (readError) {
@@ -825,7 +833,7 @@ export function getDB(): DBData {
   }
 
   // Step 3: No file — try PostgreSQL (for cold start on Render after restart)
-  if (HAS_DATABASE_URL) {
+  if (hasDBUrl()) {
     console.log('[DB] No database.json found, trying PostgreSQL...');
     const pgData = loadDBFromPostgresSync();
     if (pgData) {
@@ -860,7 +868,7 @@ export function getDB(): DBData {
   initMaxIds(seed);
   dbCache = seed;
   if (FS_WRITABLE) fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf-8');
-  if (HAS_DATABASE_URL) {
+  if (hasDBUrl()) {
     saveDBToPostgres(seed).catch(e => console.error('[DB] Seed save to PG failed:', e));
   }
   return seed;
@@ -919,7 +927,7 @@ export function saveDB(data: DBData): void {
     JSON.parse(fs.readFileSync(tmpFile, 'utf-8')); // verify
     fs.renameSync(tmpFile, DB_FILE);
   }
-  if (HAS_DATABASE_URL) {
+  if (hasDBUrl()) {
     saveDBToPostgres(data).catch(err =>
       console.error('[DB] Failed to persist to PostgreSQL:', err)
     );
@@ -932,7 +940,7 @@ export async function saveDBAsync(data: DBData): Promise<void> {
     ensureDataDirectory();
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
   }
-  if (HAS_DATABASE_URL) {
+  if (hasDBUrl()) {
     const saved = await saveDBToPostgres(data);
     if (!saved) console.error('[DB] Failed to persist to PostgreSQL');
   }
@@ -953,4 +961,57 @@ export function logAudit(userId: number, username: string, action: string, targe
   };
   db.audit_logs.unshift(newLog);
   saveDB(db);
+}
+
+/**
+ * Fire-and-forget sync to PostgreSQL — called after every getDB() load
+ * and after every saveDB(). Ensures PG always has the latest data.
+ */
+export function syncToPostgreSQL(data: DBData): void {
+  if (!hasDBUrl() || process.env.DISABLE_PG_SYNC === '1') return;
+  initializePostgresDB()
+    .then(() => saveDBToPostgres(data))
+    .then((saved) => {
+      if (saved) {
+        data.db_config = data.db_config || {};
+        data.db_config.last_sync_at = new Date().toISOString();
+        data.db_config.pg_connected = true;
+      }
+    })
+    .catch((err) => {
+      console.error('[DB] PG sync failed:', err);
+      if (data.db_config) data.db_config.pg_connected = false;
+    });
+}
+
+/**
+ * Periodic background sync — syncs the entire DB to PostgreSQL every 60 seconds.
+ * Only runs on writable FS (Render/Local/VPS), not on Vercel serverless.
+ * Prevents data loss on crash by keeping PG relatively up-to-date.
+ */
+let _periodicSyncStarted = false;
+const PERIODIC_SYNC_INTERVAL_MS = 60_000; // 60 seconds
+
+export function startPeriodicPGSync(): void {
+  if (_periodicSyncStarted || !hasDBUrl()) return;
+  if (!FS_WRITABLE) return; // Vercel serverless: each request syncs individually
+  _periodicSyncStarted = true;
+  console.log('[DB] Periodic PG sync started (every 60s)');
+  const tick = () => {
+    setTimeout(() => {
+      try {
+        const data = getDB();
+        syncToPostgreSQL(data);
+      } catch (e) {
+        console.error('[DB] Periodic sync error:', e);
+      }
+      tick(); // Schedule next tick regardless
+    }, PERIODIC_SYNC_INTERVAL_MS);
+  };
+  tick();
+}
+
+// Start periodic sync on module load (server start)
+if (typeof process !== 'undefined' && process.env.NEXT_RUNTIME !== 'edge' && FS_WRITABLE) {
+  startPeriodicPGSync();
 }
