@@ -1,0 +1,129 @@
+name: 🚀 Auto Deploy to Oracle Cloud VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # 🔐 Required Secrets (set in GitHub → Settings → Secrets and variables → Actions):
+    #   VPS_HOST:      Public IP or domain of VPS (e.g. 168.xxx.xxx.xxx)
+    #   SSH_PRIVATE_KEY: Content of your SSH private key (.pem) file
+    #   VPS_USERNAME:  SSH username (default: ubuntu)
+    #   JWT_SECRET:    Optional JWT secret (uses default if not set)
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: 📝 Create env file
+        run: |
+          cat > .env.local << EOF
+          JWT_SECRET=${{ secrets.JWT_SECRET || 'sop-knowledge-base-super-secret-key-2026' }}
+          EOF
+
+      - name: 🏗️ Build project
+        run: npm run build
+
+      - name: 🔧 Install rsync (for file sync)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq rsync
+
+      - name: 🔑 Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: 🚀 Deploy to VPS
+        env:
+          VPS_USER: ${{ secrets.VPS_USERNAME || 'ubuntu' }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          APP_DIR: /var/www/sop-knowledge-base
+        run: |
+          echo "🔄 Connecting to ${VPS_USER}@${VPS_HOST}..."
+
+          # Ensure target directory exists
+          ssh ${VPS_USER}@${VPS_HOST} "mkdir -p ${APP_DIR}"
+
+          # Copy built files to VPS (faster than git pull + rebuild)
+          echo "📤 Syncing files..."
+          rsync -az --delete \
+            --exclude 'node_modules' \
+            --exclude '.git' \
+            --exclude 'data/database.json' \
+            --exclude 'data/backup/' \
+            --exclude 'public/uploads/' \
+            --exclude '.env.local' \
+            ./ ${VPS_USER}@${VPS_HOST}:${APP_DIR}/
+
+          # Build and restart on VPS
+          # Note: Using unquoted ENDSSH so $VPS_USER expands locally,
+          # while remote $ signs (like $PATH) must be escaped as \$PATH
+          echo "⚙️ Building and restarting on VPS..."
+          ssh ${VPS_USER}@${VPS_HOST} << ENDSSH
+            set -e
+            cd "${APP_DIR}"
+
+            # Install deps for target architecture
+            npm install --legacy-peer-deps 2>&1
+
+            # Ensure .env.local exists
+            if [ ! -f .env.local ]; then
+              echo "JWT_SECRET=sop-knowledge-base-super-secret-key-2026" > .env.local
+            fi
+
+            # Ensure directories
+            mkdir -p public/uploads/sops data/backup
+
+            # Build for target architecture (ARM Ampere A1)
+            npm run build 2>&1
+
+            # Restart app with PM2
+            if command -v pm2 &> /dev/null; then
+              pm2 restart sop-knowledge-base 2>/dev/null || \
+              pm2 start npm --name sop-knowledge-base -- start -- -p 3000
+              pm2 save
+            else
+              sudo npm install -g pm2
+              pm2 start npm --name sop-knowledge-base -- start -- -p 3000
+              pm2 save
+              sudo env PATH=\$PATH:/usr/bin pm2 startup systemd -u ${VPS_USER} --hp /home/${VPS_USER}
+            fi
+
+            echo "✅ Deploy complete!"
+          ENDSSH
+
+      - name: ✅ Health Check
+        env:
+          VPS_USER: ${{ secrets.VPS_USERNAME || 'ubuntu' }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          echo "⏳ Waiting for app to start..."
+          sleep 5
+          for i in 1 2 3 4 5; do
+            STATUS=$(ssh ${VPS_USER}@${VPS_HOST} "curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/ 2>/dev/null || echo '000'")
+            if [ "$STATUS" = "200" ] || [ "$STATUS" = "302" ]; then
+              echo "✅ App is responding with HTTP $STATUS"
+              echo "🌐 http://${VPS_HOST}/"
+              exit 0
+            fi
+            echo "   Attempt $i: HTTP $STATUS — waiting..."
+            sleep 3
+          done
+          echo "⚠️ Health check did not confirm 200, but deploy completed."
+          echo "   Check: ssh ${VPS_USER}@${VPS_HOST} 'pm2 logs sop-knowledge-base --nostream --lines 20'"
