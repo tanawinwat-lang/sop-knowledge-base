@@ -174,13 +174,16 @@ const BACKUP_DIR = path.join(process.cwd(), 'data', 'backup');
 const BACKUP_RETENTION_DAYS = 7;
 
 // Platform checks:
-// - Vercel: file system is read-only, use PostgreSQL
-// - Render free tier: file system is ephemeral (wiped on restart), use PostgreSQL
-// - Local/VPS: use database.json (persistent disk)
+// Strategy: ALWAYS write to database.json (works on any platform with writable fs)
+// PLUS write to PostgreSQL if DATABASE_URL is set (for cross-restart persistence)
+// - Vercel: read-only filesystem → PG only (no file writes)
+// - Render free: writable but ephemeral → file writes + PG (dual-write)
+// - Local/VPS: persistent disk → file writes + PG if available (dual-write)
 const IS_VERCEL = process.env.VERCEL === '1';
-const IS_RENDER = process.env.RENDER === '1';
-const NO_PERSISTENT_FS = IS_VERCEL || IS_RENDER; // No permanent filesystem
 const HAS_DATABASE_URL = !!process.env.DATABASE_URL;
+
+// Whether the filesystem is writable at all (Vercel is the only read-only platform)
+const FS_WRITABLE = !IS_VERCEL;
 
 // Track PG loading state — prevents redundant async load attempts
 let _pgLoadStarted = false;
@@ -239,7 +242,7 @@ export function getNextId(type: 'sop' | 'announcement' | 'audit' | 'category' | 
 }
 
 function ensureDataDirectory() {
-  if (NO_PERSISTENT_FS) return; // No persistent file system
+  if (!FS_WRITABLE) return;
   const dir = path.dirname(DB_FILE);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -247,14 +250,14 @@ function ensureDataDirectory() {
 }
 
 function ensureBackupDir() {
-  if (NO_PERSISTENT_FS) return;
+  if (!FS_WRITABLE) return;
   if (!fs.existsSync(BACKUP_DIR)) {
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
   }
 }
 
 export function cleanupOldBackups() {
-  if (NO_PERSISTENT_FS) return;
+  if (!FS_WRITABLE) return;
   try {
     const cutoff = Date.now() - BACKUP_RETENTION_DAYS * 24 * 60 * 60 * 1000;
     if (!fs.existsSync(BACKUP_DIR)) return;
@@ -278,7 +281,7 @@ export function cleanupOldBackups() {
 }
 
 export function createBackup() {
-  if (NO_PERSISTENT_FS) return; // No file-based backups without persistent disk
+  if (!FS_WRITABLE) return;
   if (!fs.existsSync(DB_FILE)) return;
   ensureBackupDir();
   try {
@@ -294,7 +297,7 @@ export function createBackup() {
 
 // ====== Scheduled Daily Backup at 22:00 ======
 function scheduleDailyBackup() {
-  if (NO_PERSISTENT_FS) return; // No backup scheduling without persistent disk
+  if (!FS_WRITABLE) return;
   const now = new Date();
   const target = new Date(now);
   target.setHours(22, 0, 0, 0);
@@ -313,7 +316,7 @@ function scheduleDailyBackup() {
 }
 
 // Initialize scheduled backup on module load (server start)
-if (typeof process !== 'undefined' && process.env.NEXT_RUNTIME !== 'edge' && !NO_PERSISTENT_FS) {
+if (typeof process !== 'undefined' && process.env.NEXT_RUNTIME !== 'edge' && FS_WRITABLE) {
   scheduleDailyBackup();
 }
 
@@ -620,243 +623,219 @@ export function getDB(): DBData {
   // Return cached version if available
   if (dbCache) return dbCache;
 
-  // On platforms without persistent filesystem (Vercel, Render free):
-  // use PostgreSQL if available, otherwise in-memory seed
-  if (NO_PERSISTENT_FS) {
+  // ===== DUAL-WRITE STRATEGY =====
+  // On Vercel (read-only fs): use PostgreSQL only (via sync/async load)
+  // On Render/local/VPS (writable fs): use database.json for speed + PG for persistence
+  // ===============================
+
+  if (!FS_WRITABLE) {
+    // Vercel: PG-only path
     if (HAS_DATABASE_URL) {
-      // STEP 1: Try synchronous PG load first (blocks until data arrives or timeout)
-      // This ensures cold start returns REAL data from PostgreSQL, not seed data
-      console.log('[DB] Attempting synchronous PostgreSQL load...');
+      console.log('[DB] Vercel: attempting sync PG load...');
       const syncData = loadDBFromPostgresSync();
       if (syncData) {
         console.log('[DB] Loaded data from PostgreSQL (sync)');
-        // Apply backward-compatibility migrations to PG data
         migrateData(syncData);
         _maxIdInitialized = false;
         initMaxIds(syncData);
         dbCache = syncData;
         return syncData;
       }
-      console.log('[DB] Sync PG load returned nothing, data may not exist yet');
-
-      // STEP 2: If sync failed (first deploy, no data yet), seed + async save
-      // Also start async PG load for subsequent requests on this instance
+      // Async fallback + seed
       if (!_pgLoadStarted) {
         _pgLoadStarted = true;
-        console.log('[DB] Seeding data and starting async PostgreSQL load...');
         initializePostgresDB()
           .then(() => loadDBFromPostgres())
           .then((pgData) => {
             if (pgData) {
-              console.log('[DB] Loaded data from PostgreSQL (async fallback)');
               migrateData(pgData);
               _maxIdInitialized = false;
               initMaxIds(pgData);
               dbCache = pgData;
             } else if (!dbCache) {
-              console.log('[DB] No data in PostgreSQL, will seed and save');
               const seed = getInitialSeedData();
-              initMaxIds(seed);
-              dbCache = seed;
-              saveDBToPostgres(seed).catch(err =>
-                console.error('[DB] Failed to persist seed to PostgreSQL:', err)
-              );
+              initMaxIds(seed); dbCache = seed;
+              saveDBToPostgres(seed).catch(e => console.error('[DB] Seed persist failed:', e));
             }
           })
           .catch((err) => {
-            console.error('[DB] PostgreSQL async fallback failed:', err);
+            console.error('[DB] PG async fallback failed:', err);
             if (!dbCache) {
               const seed = getInitialSeedData();
-              initMaxIds(seed);
-              dbCache = seed;
+              initMaxIds(seed); dbCache = seed;
             }
           });
       }
-      // Fallback: seed data while async loads
       const seed = getInitialSeedData();
-      initMaxIds(seed);
-      dbCache = seed;
+      initMaxIds(seed); dbCache = seed;
       return seed;
     }
-    console.warn('[DB] Running on Vercel without DATABASE_URL — data is ephemeral (in-memory only, seed data)');
+    console.warn('[DB] Vercel without DATABASE_URL — data is ephemeral!');
     const seed = getInitialSeedData();
     dbCache = seed;
     return seed;
   }
 
+  // ===== WRITABLE FS PATH (Local, VPS, Render) =====
   ensureDataDirectory();
-  if (!fs.existsSync(DB_FILE)) {
-    const seed = getInitialSeedData();
-    fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf-8');
-    dbCache = seed;
-    return seed;
-  }
-  try {
-    const raw = fs.readFileSync(DB_FILE, 'utf-8');
-    const data = JSON.parse(raw) as DBData;
-    // Backward compatibility: ensure new fields exist
-    if (!data.announcements) data.announcements = [];
-    if (!data.announcement_reads) data.announcement_reads = [];
-    if (!data.announcement_comments) data.announcement_comments = [];
-    data.announcements.forEach((a: any) => { if (!a.attachments) a.attachments = []; });
-    data.sops.forEach((s: any) => { if (!s.attachments) s.attachments = []; });
-    data.users.forEach((u: any) => { if (u.is_active === undefined) u.is_active = true; });
-    if (!data.tag_library) data.tag_library = [];
-    if (!data.trash_sops) data.trash_sops = [];
-    if (!data.change_requests) data.change_requests = [];
-    if (!data.sop_templates) data.sop_templates = [];
 
-    // Initialize ID counters after all data migration/repair is complete
-    initMaxIds(data);
+  // Step 1: Try reading from database.json (fastest path)
+  if (fs.existsSync(DB_FILE)) {
+    try {
+      const raw = fs.readFileSync(DB_FILE, 'utf-8');
+      const data = JSON.parse(raw) as DBData;
+      // Backward compatibility
+      migrateData(data);
+      initMaxIds(data);
 
-    // Auto-cleanup: permanently delete trashed SOPs older than 30 days
-    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-    const beforeTrashCount = data.trash_sops.length;
-    data.trash_sops = data.trash_sops.filter(
-      (t) => new Date(t.deleted_at).getTime() >= thirtyDaysAgo
-    );
-    if (data.trash_sops.length !== beforeTrashCount) {
-      saveDB(data);
-    }
+      // Auto-cleanup: permanently delete trashed SOPs older than 30 days
+      const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      const beforeTrashCount = data.trash_sops.length;
+      data.trash_sops = data.trash_sops.filter(
+        (t) => new Date(t.deleted_at).getTime() >= thirtyDaysAgo
+      );
+      if (data.trash_sops.length !== beforeTrashCount) saveDB(data);
 
-    // Repair corrupted permissions: reset SUPERVISOR and custom roles to correct defaults
-    // This fixes data corruption from previous auto-migration bugs
-    // ALL_ROUTES is defined at module level
-    let needsRepair = false;
-
-    // --- Fix 1: Reset SUPERVISOR permissions to seed defaults ---
-    const supSeed: Record<string, { a: boolean; w: boolean; d: boolean }> = {
-      '/dashboard': { a: true, w: true, d: false },
-      '/sops': { a: true, w: true, d: false },
-      '/sops/new': { a: true, w: true, d: false },
-      '/sops/trash': { a: true, w: true, d: false },
-      '/approval': { a: true, w: true, d: false },
-      '/feedback': { a: true, w: true, d: false },
-      '/announcements': { a: true, w: true, d: false },
-      '/settings/password': { a: true, w: false, d: false },
-      '/settings/users': { a: false, w: false, d: false },
-      '/settings/permissions': { a: false, w: false, d: false },
-      '/settings/backups': { a: true, w: false, d: false },
-      '/settings/audit-logs': { a: true, w: false, d: false },
-    };
-    for (const perm of data.page_permissions) {
-      if (perm.role_id === 2) {
-        const exp = supSeed[perm.page_route];
-        if (exp && (perm.can_access !== exp.a || perm.can_write !== exp.w || perm.can_delete !== exp.d)) {
-          perm.can_access = exp.a;
-          perm.can_write = exp.w;
-          perm.can_delete = exp.d;
-          needsRepair = true;
-        }
-      }
-    }
-
-    // --- Fix 2: Only repair custom role (id > 3) permissions that are OBVIOUSLY corrupted ---
-    // e.g. can_write=true for a route that shouldn't have write access
-    // Don't force-reset everything — respect permissions set via RBAC UI
-    for (const perm of data.page_permissions) {
-      if (perm.role_id > 3) {
-        // Fix 2a: can_write or can_delete is true but can_access is false
-        if (!perm.can_access && (perm.can_write || perm.can_delete)) {
-          perm.can_write = false;
-          perm.can_delete = false;
-          needsRepair = true;
-        }
-        // Fix 2b: can_delete is true when can_write is false (can't delete without write)
-        if (!perm.can_write && perm.can_delete) {
-          perm.can_delete = false;
-          needsRepair = true;
-        }
-      }
-    }
-
-    if (needsRepair) {
-      saveDB(data);
-    }
-
-    // Check for missing routes and add them (runs every cold start, but only adds if something is missing)
-    // ALL_ROUTES is defined at module level
-    const existingPairs = new Set(data.page_permissions.map((p) => `${p.page_route}-${p.role_id}`));
-    const newPerms: PagePermission[] = [];
-
-    for (const route of ALL_ROUTES) {
-      for (const role of data.roles) {
-        const roleId = role.id;
-        if (!existingPairs.has(`${route}-${roleId}`)) {
-          const isAdmin = roleId === 1;
-          const isPrivileged = isAdmin || roleId === 2;
-          // For custom roles (ids > 3), default to AGENT-level permissions
-          const isCustom = roleId > 3;
-          const permId = getNextId('permission');
-          let canAccess = true, canWrite = false, canDelete = false;
-
-          if (route === '/settings/users' || route === '/settings/permissions') {
-            canAccess = isAdmin; canWrite = isAdmin; canDelete = isAdmin;
-          } else if (route === '/settings/audit-logs') {
-            canAccess = isPrivileged;
-          } else if (route === '/sops/new' || route === '/sops/trash') {
-            canAccess = isPrivileged; canWrite = isPrivileged;
-            if (route === '/sops/trash') canDelete = isAdmin;
-          } else if (route === '/approval' || route === '/feedback') {
-            canAccess = isPrivileged; canWrite = isPrivileged;
-          } else if (route === '/announcements') {
-            canAccess = true; canWrite = isPrivileged;
-          } else if (route === '/settings/password') {
-            canAccess = true;
-          } else {
-            canAccess = true; canWrite = isPrivileged; canDelete = isAdmin;
+      // Repair corrupted permissions
+      let needsRepair = false;
+      // Fix 1: Reset SUPERVISOR permissions to seed defaults
+      const supSeed: Record<string, { a: boolean; w: boolean; d: boolean }> = {
+        '/dashboard': { a: true, w: true, d: false },
+        '/sops': { a: true, w: true, d: false },
+        '/sops/new': { a: true, w: true, d: false },
+        '/sops/trash': { a: true, w: true, d: false },
+        '/approval': { a: true, w: true, d: false },
+        '/feedback': { a: true, w: true, d: false },
+        '/announcements': { a: true, w: true, d: false },
+        '/settings/password': { a: true, w: false, d: false },
+        '/settings/users': { a: false, w: false, d: false },
+        '/settings/permissions': { a: false, w: false, d: false },
+        '/settings/backups': { a: true, w: false, d: false },
+        '/settings/audit-logs': { a: true, w: false, d: false },
+      };
+      for (const perm of data.page_permissions) {
+        if (perm.role_id === 2) {
+          const exp = supSeed[perm.page_route];
+          if (exp && (perm.can_access !== exp.a || perm.can_write !== exp.w || perm.can_delete !== exp.d)) {
+            perm.can_access = exp.a; perm.can_write = exp.w; perm.can_delete = exp.d;
+            needsRepair = true;
           }
-
-          // For custom roles, use AGENT-level defaults (can_access only for basic routes)
-          if (isCustom) {
-            const basicRoutes = ['/dashboard', '/sops', '/announcements', '/settings/password'];
-            canAccess = basicRoutes.includes(route);
-            canWrite = false;
-            canDelete = false;
-          }
-
-          newPerms.push({ id: permId, role_id: roleId, page_route: route, can_access: canAccess, can_write: canWrite, can_delete: canDelete });
         }
       }
-    }
+      // Fix 2: Custom role sanity (can't write/delete without access, can't delete without write)
+      for (const perm of data.page_permissions) {
+        if (perm.role_id > 3) {
+          if (!perm.can_access && (perm.can_write || perm.can_delete)) {
+            perm.can_write = false; perm.can_delete = false; needsRepair = true;
+          }
+          if (!perm.can_write && perm.can_delete) {
+            perm.can_delete = false; needsRepair = true;
+          }
+        }
+      }
+      if (needsRepair) saveDB(data);
 
-    if (newPerms.length > 0) {
-      data.page_permissions.push(...newPerms);
-      saveDB(data);
-    }
+      // Auto-migrate missing routes
+      const existingPairs = new Set(data.page_permissions.map((p) => `${p.page_route}-${p.role_id}`));
+      const newPerms: PagePermission[] = [];
+      for (const route of ALL_ROUTES) {
+        for (const role of data.roles) {
+          const roleId = role.id;
+          if (!existingPairs.has(`${route}-${roleId}`)) {
+            const isAdmin = roleId === 1;
+            const isPrivileged = isAdmin || roleId === 2;
+            const isCustom = roleId > 3;
+            let canAccess = true, canWrite = false, canDelete = false;
+            if (route === '/settings/users' || route === '/settings/permissions') {
+              canAccess = isAdmin; canWrite = isAdmin; canDelete = isAdmin;
+            } else if (route === '/settings/audit-logs') {
+              canAccess = isPrivileged;
+            } else if (route === '/sops/new' || route === '/sops/trash') {
+              canAccess = isPrivileged; canWrite = isPrivileged;
+              if (route === '/sops/trash') canDelete = isAdmin;
+            } else if (route === '/approval' || route === '/feedback') {
+              canAccess = isPrivileged; canWrite = isPrivileged;
+            } else if (route === '/announcements') {
+              canAccess = true; canWrite = isPrivileged;
+            } else if (route === '/settings/password') {
+              canAccess = true;
+            }
+            if (isCustom) {
+              canAccess = ['/dashboard', '/sops', '/announcements', '/settings/password'].includes(route);
+              canWrite = false; canDelete = false;
+            }
+            newPerms.push({ id: getNextId('permission'), role_id: roleId, page_route: route, can_access: canAccess, can_write: canWrite, can_delete: canDelete });
+          }
+        }
+      }
+      if (newPerms.length > 0) {
+        data.page_permissions.push(...newPerms);
+        saveDB(data);
+      }
 
-    dbCache = data;
-    return data;
-  } catch (readError) {
-    // File is corrupted — try to recover from latest backup before falling back to seed
-    console.error('[DB] Database file corrupted, attempting recovery from backup...', readError);
-    const recovered = tryRecoverFromBackup();
-    if (recovered) {
-      console.log('[DB] Successfully recovered database from backup');
-      // Apply backward-compatibility migrations to recovered data (same as try block)
-      if (!recovered.announcements) recovered.announcements = [];
-      if (!recovered.announcement_reads) recovered.announcement_reads = [];
-      if (!recovered.announcement_comments) recovered.announcement_comments = [];
-      recovered.announcements.forEach((a: any) => { if (!a.attachments) a.attachments = []; });
-      recovered.sops.forEach((s: any) => { if (!s.attachments) s.attachments = []; });
-      recovered.users.forEach((u: any) => { if (u.is_active === undefined) u.is_active = true; });
-      if (!recovered.tag_library) recovered.tag_library = [];
-      if (!recovered.trash_sops) recovered.trash_sops = [];
-      if (!recovered.change_requests) recovered.change_requests = [];
-      if (!recovered.sop_templates) recovered.sop_templates = [];
-      // Initialize ID counters so getNextId() doesn't return duplicate IDs!
-      initMaxIds(recovered);
-      dbCache = recovered;
-      return recovered;
+      dbCache = data;
+
+      // Step 2 (fire-and-forget): Sync this data to PostgreSQL if available
+      if (HAS_DATABASE_URL && !process.env.DISABLE_PG_SYNC) {
+        initializePostgresDB().then(() => {
+          saveDBToPostgres(data).catch(e => console.error('[DB] PG sync failed:', e));
+        });
+      }
+
+      return data;
+    } catch (readError) {
+      console.error('[DB] database.json corrupted, trying recovery...', readError);
+      const recovered = tryRecoverFromBackup();
+      if (recovered) {
+        migrateData(recovered);
+        initMaxIds(recovered);
+        dbCache = recovered;
+        return recovered;
+      }
+      console.error('[DB] No valid backup — falling to seed');
     }
-    // No backup available — create fresh seed data (data loss unavoidable)
-    console.error('[DB] No valid backup found — falling back to seed data. Data loss occurred!');
-    const seed = getInitialSeedData();
-    if (!NO_PERSISTENT_FS) {
-      fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf-8');
-    }
-    return seed;
   }
+
+  // Step 3: No file — try PostgreSQL (for cold start on Render after restart)
+  if (HAS_DATABASE_URL) {
+    console.log('[DB] No database.json found, trying PostgreSQL...');
+    const pgData = loadDBFromPostgresSync();
+    if (pgData) {
+      console.log('[DB] Loaded from PostgreSQL (sync)');
+      migrateData(pgData);
+      initMaxIds(pgData);
+      dbCache = pgData;
+      // Save to file for next startup
+      fs.writeFileSync(DB_FILE, JSON.stringify(pgData, null, 2), 'utf-8');
+      return pgData;
+    }
+    // Async fallback
+    if (!_pgLoadStarted) {
+      _pgLoadStarted = true;
+      initializePostgresDB()
+        .then(() => loadDBFromPostgres())
+        .then((pgData) => {
+          if (pgData) {
+            migrateData(pgData);
+            initMaxIds(pgData);
+            dbCache = pgData;
+            if (FS_WRITABLE) fs.writeFileSync(DB_FILE, JSON.stringify(pgData, null, 2), 'utf-8');
+          }
+        })
+        .catch(e => console.error('[DB] PG async load failed:', e));
+    }
+  }
+
+  // Step 4: Nothing found — create seed data
+  console.log('[DB] Creating fresh seed data');
+  const seed = getInitialSeedData();
+  initMaxIds(seed);
+  dbCache = seed;
+  if (FS_WRITABLE) fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf-8');
+  if (HAS_DATABASE_URL) {
+    saveDBToPostgres(seed).catch(e => console.error('[DB] Seed save to PG failed:', e));
+  }
+  return seed;
 }
 
 /**
@@ -888,7 +867,6 @@ function tryRecoverFromBackup(): DBData | null {
     const latestBackup = path.join(BACKUP_DIR, files[0]);
     const raw = fs.readFileSync(latestBackup, 'utf-8');
     const data = JSON.parse(raw) as DBData;
-    // Restore the backup as the main database file
     fs.copyFileSync(latestBackup, DB_FILE);
     console.log(`[DB] Recovered from backup: ${files[0]}`);
     return data;
@@ -898,40 +876,35 @@ function tryRecoverFromBackup(): DBData | null {
   }
 }
 
-// All pages/routes in the system — used by both repair and auto-migration
+// All pages/routes in the system
 const ALL_ROUTES = ['/dashboard', '/sops', '/sops/new', '/sops/trash', '/approval', '/feedback', '/announcements', '/settings/password', '/settings/users', '/settings/permissions', '/settings/backups', '/settings/audit-logs'];
 
 export function saveDB(data: DBData): void {
-  if (!NO_PERSISTENT_FS) {
-    // Local/VPS: atomic write (temp file -> verify -> rename)
-    // Prevents database corruption if the server crashes mid-write
+  // Dual-write: always write to file (if writable) + PG (if available)
+  if (FS_WRITABLE) {
     ensureDataDirectory();
     const tmpFile = DB_FILE + '.tmp';
     const jsonStr = JSON.stringify(data, null, 2);
     fs.writeFileSync(tmpFile, jsonStr, 'utf-8');
-    const verify = fs.readFileSync(tmpFile, 'utf-8');
-    JSON.parse(verify); // Throw on invalid JSON — prevents rename of corrupted file
-    fs.renameSync(tmpFile, DB_FILE); // Atomic rename (same filesystem)
-  } else if (HAS_DATABASE_URL) {
-    // On cloud platforms without persistent disk (Vercel, Render free):
-    // persist to PostgreSQL
+    JSON.parse(fs.readFileSync(tmpFile, 'utf-8')); // verify
+    fs.renameSync(tmpFile, DB_FILE);
+  }
+  if (HAS_DATABASE_URL) {
     saveDBToPostgres(data).catch(err =>
       console.error('[DB] Failed to persist to PostgreSQL:', err)
     );
   }
-  dbCache = data; // Update cache immediately
+  dbCache = data;
 }
 
-// Async version for explicit waits
 export async function saveDBAsync(data: DBData): Promise<void> {
-  if (!NO_PERSISTENT_FS) {
+  if (FS_WRITABLE) {
     ensureDataDirectory();
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
-  } else if (HAS_DATABASE_URL) {
+  }
+  if (HAS_DATABASE_URL) {
     const saved = await saveDBToPostgres(data);
-    if (!saved) {
-      console.error('[DB] Failed to persist to PostgreSQL');
-    }
+    if (!saved) console.error('[DB] Failed to persist to PostgreSQL');
   }
   dbCache = data;
 }
