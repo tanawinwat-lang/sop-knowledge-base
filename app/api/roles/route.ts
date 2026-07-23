@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getDB, saveDB, logAudit, Role, PagePermission } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth';
+import { ensurePersisted } from '@/lib/db-context';
 
 export async function GET() {
   const db = getDB();
@@ -75,8 +76,11 @@ export async function POST(req: Request) {
       `สร้างตำแหน่งใหม่ในระบบ: ${cleanRoleName}`
     );
 
+    // Ensure data is persisted before response
+    await ensurePersisted();
     return NextResponse.json({ role: newRole, roles: db.roles });
   } catch (err: any) {
+    await ensurePersisted();
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

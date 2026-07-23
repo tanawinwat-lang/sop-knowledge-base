@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcryptjs';
 import { loadDBFromPostgres, saveDBToPostgres, isPostgresAvailable } from './db-postgres';
+import { setPendingWrite } from './db-context';
 
 export interface User {
   id: number;
@@ -781,16 +782,28 @@ const ALL_ROUTES = ['/dashboard', '/sops', '/sops/new', '/sops/trash', '/approva
 
 export function saveDB(data: DBData): void {
   if (!IS_VERCEL) {
+    // Local dev: write to file immediately
     ensureDataDirectory();
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
   } else if (HAS_DATABASE_URL) {
-    // On Vercel with PostgreSQL: attempt async save in background
-    // Don't block the request, just queue it
-    saveDBToPostgres(data).catch(err => {
-      console.error('[DB] Failed to save to PostgreSQL:', err);
-    });
+    // On Vercel: mark as pending write (will flush at end of request)
+    setPendingWrite(data);
   }
-  dbCache = data; // Update cache (always)
+  dbCache = data; // Update cache immediately
+}
+
+// Async version for explicit waits
+export async function saveDBAsync(data: DBData): Promise<void> {
+  if (!IS_VERCEL) {
+    ensureDataDirectory();
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  } else if (HAS_DATABASE_URL) {
+    const saved = await saveDBToPostgres(data);
+    if (!saved) {
+      console.error('[DB] Failed to persist to PostgreSQL');
+    }
+  }
+  dbCache = data;
 }
 
 export function logAudit(userId: number, username: string, action: string, target: string, details: string, ip: string = '127.0.0.1') {
