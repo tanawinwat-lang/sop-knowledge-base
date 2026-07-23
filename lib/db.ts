@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcryptjs';
-import { loadDBFromPostgres, saveDBToPostgres, isPostgresAvailable, initializePostgresDB } from './db-postgres';
+import { loadDBFromPostgres, saveDBToPostgres, isPostgresAvailable, initializePostgresDB, loadDBFromPostgresSync } from './db-postgres';
 import { setPendingWrite } from './db-context';
 
 export interface User {
@@ -619,31 +619,36 @@ export function getDB(): DBData {
   // On Vercel: use PostgreSQL if available, otherwise in-memory seed
   if (IS_VERCEL) {
     if (HAS_DATABASE_URL) {
-      // Start async PG load ONCE per serverless instance
+      // STEP 1: Try synchronous PG load first (blocks until data arrives or timeout)
+      // This ensures cold start returns REAL data from PostgreSQL, not seed data
+      console.log('[DB] Attempting synchronous PostgreSQL load...');
+      const syncData = loadDBFromPostgresSync();
+      if (syncData) {
+        console.log('[DB] Loaded data from PostgreSQL (sync)');
+        // Apply backward-compatibility migrations to PG data
+        migrateData(syncData);
+        _maxIdInitialized = false;
+        initMaxIds(syncData);
+        dbCache = syncData;
+        return syncData;
+      }
+      console.log('[DB] Sync PG load returned nothing, data may not exist yet');
+
+      // STEP 2: If sync failed (first deploy, no data yet), seed + async save
+      // Also start async PG load for subsequent requests on this instance
       if (!_pgLoadStarted) {
         _pgLoadStarted = true;
-        console.log('[DB] Starting async PostgreSQL load...');
+        console.log('[DB] Seeding data and starting async PostgreSQL load...');
         initializePostgresDB()
           .then(() => loadDBFromPostgres())
           .then((pgData) => {
             if (pgData) {
-              console.log('[DB] Loaded data from PostgreSQL');
-              // Apply backward-compatibility migrations to PG data
-              if (!pgData.announcements) pgData.announcements = [];
-              if (!pgData.announcement_reads) pgData.announcement_reads = [];
-              if (!pgData.announcement_comments) pgData.announcement_comments = [];
-              pgData.announcements.forEach((a: any) => { if (!a.attachments) a.attachments = []; });
-              pgData.sops.forEach((s: any) => { if (!s.attachments) s.attachments = []; });
-              pgData.users.forEach((u: any) => { if (u.is_active === undefined) u.is_active = true; });
-              if (!pgData.tag_library) pgData.tag_library = [];
-              if (!pgData.trash_sops) pgData.trash_sops = [];
-              if (!pgData.change_requests) pgData.change_requests = [];
-              if (!pgData.sop_templates) pgData.sop_templates = [];
-              // Reset ID counters so PG data's IDs (from other instances) take precedence
+              console.log('[DB] Loaded data from PostgreSQL (async fallback)');
+              migrateData(pgData);
               _maxIdInitialized = false;
               initMaxIds(pgData);
               dbCache = pgData;
-            } else {
+            } else if (!dbCache) {
               console.log('[DB] No data in PostgreSQL, will seed and save');
               const seed = getInitialSeedData();
               initMaxIds(seed);
@@ -654,7 +659,7 @@ export function getDB(): DBData {
             }
           })
           .catch((err) => {
-            console.error('[DB] PostgreSQL init/load failed, using seed:', err);
+            console.error('[DB] PostgreSQL async fallback failed:', err);
             if (!dbCache) {
               const seed = getInitialSeedData();
               initMaxIds(seed);
@@ -662,7 +667,7 @@ export function getDB(): DBData {
             }
           });
       }
-      // Cache seed temporarily until PG data arrives
+      // Fallback: seed data while async loads
       const seed = getInitialSeedData();
       initMaxIds(seed);
       dbCache = seed;
@@ -847,6 +852,22 @@ export function getDB(): DBData {
     }
     return seed;
   }
+}
+
+/**
+ * Apply backward-compatibility migrations to data loaded from PostgreSQL
+ */
+function migrateData(data: DBData): void {
+  if (!data.announcements) data.announcements = [];
+  if (!data.announcement_reads) data.announcement_reads = [];
+  if (!data.announcement_comments) data.announcement_comments = [];
+  data.announcements.forEach((a: any) => { if (!a.attachments) a.attachments = []; });
+  data.sops.forEach((s: any) => { if (!s.attachments) s.attachments = []; });
+  data.users.forEach((u: any) => { if (u.is_active === undefined) u.is_active = true; });
+  if (!data.tag_library) data.tag_library = [];
+  if (!data.trash_sops) data.trash_sops = [];
+  if (!data.change_requests) data.change_requests = [];
+  if (!data.sop_templates) data.sop_templates = [];
 }
 
 // Try to recover DB from the latest backup file

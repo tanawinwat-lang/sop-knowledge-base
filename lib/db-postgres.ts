@@ -5,6 +5,7 @@
  */
 
 import { Pool } from 'pg';
+import { execFileSync } from 'child_process';
 import { DBData } from './db';
 
 const IS_VERCEL = process.env.VERCEL === '1';
@@ -36,6 +37,47 @@ async function query(text: string, params?: any[]): Promise<any[]> {
   if (!p) throw new Error('No database URL configured');
   const result = await p.query(text, params);
   return result.rows;
+}
+
+/**
+ * Synchronous PostgreSQL load using child_process.execFileSync.
+ * Used by getDB() on cold start to avoid returning seed data before async PG load finishes.
+ */
+export function loadDBFromPostgresSync(): DBData | null {
+  if (!DB_URL) return null;
+  try {
+    // Create a small inline script that connects to PG and outputs snapshot_data as JSON
+    const script = `
+const { Client } = require('pg');
+const url = ${JSON.stringify(DB_URL)};
+const client = new Client(url);
+client.connect().then(() => {
+  return client.query('SELECT snapshot_data FROM db_snapshots ORDER BY updated_at DESC LIMIT 1');
+}).then(r => {
+  if (r.rows.length > 0) {
+    console.log(JSON.stringify(r.rows[0].snapshot_data));
+  }
+  return client.end();
+}).catch(e => {
+  console.error(e.message);
+  process.exit(1);
+});
+`;
+    const output = execFileSync('node', ['-e', script], {
+      timeout: 15000,
+      encoding: 'utf-8',
+      maxBuffer: 50 * 1024 * 1024, // 50MB for large JSON
+      windowsHide: true,
+    });
+    const trimmed = output.trim();
+    if (!trimmed) return null;
+    const data = JSON.parse(trimmed) as DBData;
+    console.log('[PostgreSQL] Sync loaded data from database');
+    return data;
+  } catch (err) {
+    console.error('[PostgreSQL] Sync load failed:', err instanceof Error ? err.message : err);
+    return null;
+  }
 }
 
 /**
