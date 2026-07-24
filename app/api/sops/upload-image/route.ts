@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   if (!user) {
     return NextResponse.json({ error: 'กรุณาเข้าสู่ระบบก่อนอัปโหลดรูปภาพ' }, { status: 401 });
   }
-  if (user.role_name === 'AGENT') {
+  if (user.role_name !== 'SUPER_ADMIN' && user.role_name !== 'ADMIN' && user.role_name !== 'SUPERVISOR') {
     return NextResponse.json({ error: 'ไม่มีสิทธิ์อัปโหลดรูปภาพ (เฉพาะ Admin & Supervisor)' }, { status: 403 });
   }
 

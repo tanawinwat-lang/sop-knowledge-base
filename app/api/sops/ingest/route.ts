@@ -4,7 +4,7 @@ import { autoSuggestTagsAndCategory } from '@/lib/ai';
 
 export async function POST(req: Request) {
   const user = await getCurrentUser();
-  if (!user || user.role_name === 'AGENT') {
+  if (!user || (user.role_name !== 'SUPER_ADMIN' && user.role_name !== 'ADMIN' && user.role_name !== 'SUPERVISOR')) {
     return NextResponse.json({ error: 'ไม่มีสิทธิ์อัปโหลดเอกสาร (เฉพาะ Admin & Supervisor)' }, { status: 403 });
   }
 

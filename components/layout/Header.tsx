@@ -5,7 +5,7 @@ import { Menu } from 'lucide-react';
 import { NotificationBell } from './NotificationBell';
 
 interface HeaderProps {
-  userRole: 'ADMIN' | 'SUPERVISOR' | 'AGENT';
+  userRole: 'SUPER_ADMIN' | 'ADMIN' | 'SUPERVISOR' | 'AGENT';
   username: string;
   onOpenMobileSidebar: () => void;
 }

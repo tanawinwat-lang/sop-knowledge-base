@@ -57,8 +57,8 @@ export async function POST(req: Request) {
 
     const newId = getNextId('sop');
 
-    // Workflow: SUP creates -> PENDING_APPROVE, Admin creates -> PUBLISHED directly
-    const initialStatus = user.role_name === 'ADMIN' ? 'PUBLISHED' : 'PENDING_APPROVE';
+    // Workflow: SUP creates -> PENDING_APPROVE, SUPER_ADMIN/Admin creates -> PUBLISHED directly
+    const initialStatus = user.role_name === 'SUPER_ADMIN' || user.role_name === 'ADMIN' ? 'PUBLISHED' : 'PENDING_APPROVE';
 
     const newSOP: SOP = {
       id: newId,
