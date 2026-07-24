@@ -866,20 +866,15 @@ export function getDB(): DBData {
               console.log('[DB] Replaced in-memory cache with PG data');
             }
             if (FS_WRITABLE) {
-              // Guard: Only write to file if file still has seed data or doesn't exist.
-              // If user already created/modified data, don't overwrite with stale PG data.
-              try {
-                const currentFileRaw = fs.existsSync(DB_FILE) ? fs.readFileSync(DB_FILE, 'utf-8') : null;
-                const currentFileData = currentFileRaw ? JSON.parse(currentFileRaw) : null;
-                if (!currentFileData || (currentFileData.users.length <= 3 && currentFileData.sops.length <= 4)) {
-                  fs.writeFileSync(DB_FILE, JSON.stringify(pgData, null, 2), 'utf-8');
-                  console.log('[DB] Saved PG data to database.json for next startup');
-                } else {
-                  console.log('[DB] File already has custom data — not overwriting with PG data');
-                }
-              } catch (e) {
-                // File read error — write PG data anyway (better than nothing)
+              // Only write PG data to file if it doesn't exist yet.
+              // This optimization saves a PG round-trip on next cold start,
+              // but we DON'T overwrite if the file already has data
+              // (prevents overwriting user edits made before async completed).
+              if (!fs.existsSync(DB_FILE)) {
                 fs.writeFileSync(DB_FILE, JSON.stringify(pgData, null, 2), 'utf-8');
+                console.log('[DB] Saved PG data to database.json for next startup');
+              } else {
+                console.log('[DB] File exists — not overwriting with PG data');
               }
             }
           } else {
