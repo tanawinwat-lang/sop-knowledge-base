@@ -208,3 +208,4 @@ sop-knowledge-base/
 | 👑 **Admin** | `admin@company.com` | `password123` |
 | 👔 **Supervisor** | `sup@company.com` | `password123` |
 | 👤 **Agent** | `agent@company.com` | `password123` |
+
