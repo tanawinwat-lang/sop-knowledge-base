@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 import bcrypt from 'bcryptjs';
 import { loadDBFromPostgres, saveDBToPostgres, isPostgresAvailable, initializePostgresDB, loadDBFromPostgresSync } from './db-postgres';
 import { setPendingWrite } from './db-context';
@@ -215,6 +216,44 @@ const FS_WRITABLE = !IS_VERCEL;
 
 // Track PG loading state — prevents redundant async load attempts
 let _pgLoadStarted = false;
+
+// ====== EAGER PG DATA LOADING ======
+// At module load, immediately start loading data from PostgreSQL.
+// getDB() will wait (blocking) for this to complete before returning seed.
+// This eliminates the race between sync load (execFileSync fails on Render)
+// and async load (too slow for synchronous getDB()).
+let _pgEagerData: DBData | null = null;
+let _pgEagerLoaded = false;
+let _pgEagerErrored = false;
+
+function startEagerPGLoad(): void {
+  if (_pgEagerLoaded || _pgEagerErrored || _pgLoadStarted || !hasDBUrl()) return;
+  _pgLoadStarted = true; // Prevent duplicate async loads
+  console.log('[DB] Starting eager PG data load...');
+  initializePostgresDB()
+    .then(() => loadDBFromPostgres())
+    .then((data) => {
+      if (data) {
+        _pgEagerData = data;
+        _pgEagerLoaded = true;
+        console.log('[DB] Eager PG load completed (users:', data.users.length, 'sops:', data.sops.length, ')');
+      } else {
+        _pgEagerErrored = true;
+        console.log('[DB] No data found in PostgreSQL');
+      }
+    })
+    .catch((e) => {
+      _pgEagerErrored = true;
+      console.error('[DB] Eager PG load failed:', e);
+    });
+}
+
+// Start eager PG load immediately at module load
+// This runs BEFORE any request, so by the time the first request arrives,
+// PG data might already be ready (pool connects eagerly at module load too).
+if (typeof process !== 'undefined' && process.env.NEXT_RUNTIME !== 'edge' && hasDBUrl()) {
+  startEagerPGLoad();
+}
 
 // In-memory cache: avoids redundant file reads within the same request
 // On Vercel, persists within a single serverless instance via globalThis
@@ -838,22 +877,62 @@ export function getDB(): DBData {
   }
 
   // Step 3: No file — try PostgreSQL (for cold start on Render after restart)
+  // Strategy: 
+  // 1. First try sync load (execFileSync) — works on local/VPS but may fail on Render
+  // 2. If sync fails, try eager PG data + blocking wait (up to 8s) — the pool is
+  //    already connecting eagerly at module load via initPool() + startEagerPGLoad()
+  // 3. If all PG methods fail → seed (NEVER saved to PG — see Step 4)
   if (hasDBUrl()) {
     console.log('[DB] No database.json found, trying PostgreSQL...');
-    const pgData = loadDBFromPostgresSync();
-    if (pgData) {
+    
+    // Try 1: Sync load (child_process.execFileSync)
+    const syncData = loadDBFromPostgresSync();
+    if (syncData) {
       console.log('[DB] Loaded from PostgreSQL (sync)');
-      migrateData(pgData);
-      initMaxIds(pgData);
-      dbCache = pgData;
-      // Save to file for next startup
-      fs.writeFileSync(DB_FILE, JSON.stringify(pgData, null, 2), 'utf-8');
-      return pgData;
+      migrateData(syncData);
+      initMaxIds(syncData);
+      dbCache = syncData;
+      fs.writeFileSync(DB_FILE, JSON.stringify(syncData, null, 2), 'utf-8');
+      return syncData;
     }
-    // Async fallback — runs AFTER getDB() returns if sync fails
+    
+    // Try 2: Wait for eager PG load (module-level async, pool already connecting)
+    // The pool was eagerly initialized by initPool() at module load.
+    // startEagerPGLoad() started async PG data loading at module load.
+    // We wait up to 8 seconds with brief CPU yields (execSync('sleep'))
+    // to allow the async operations to complete.
+    if (!_pgEagerLoaded && !_pgEagerErrored) {
+      console.log('[DB] Sync PG load failed, waiting for eager async load...');
+      const deadline = Date.now() + 8000;
+      let waitedMs = 0;
+      while (!_pgEagerLoaded && !_pgEagerErrored && Date.now() < deadline) {
+        try { execSync('sleep 0.2', { stdio: 'ignore', timeout: 1000 }); } catch {
+          // sleep not available (Windows) — use busy wait to avoid infinite spin
+          const pause = Date.now();
+          while (Date.now() - pause < 50) {}
+        }
+        waitedMs += 200;
+      }
+      console.log(`[DB] Eager PG load waited ${waitedMs}ms, loaded=${_pgEagerLoaded}`);
+    }
+    
+    if (_pgEagerLoaded && _pgEagerData) {
+      // 🎯 Found PG data via eager load — use it!
+      console.log('[DB] Loaded from PostgreSQL (eager async) with', 
+        _pgEagerData.users.length, 'users,', _pgEagerData.sops.length, 'SOPs');
+      migrateData(_pgEagerData);
+      initMaxIds(_pgEagerData);
+      dbCache = _pgEagerData;
+      if (FS_WRITABLE) {
+        fs.writeFileSync(DB_FILE, JSON.stringify(_pgEagerData, null, 2), 'utf-8');
+      }
+      return _pgEagerData;
+    }
+
+    // Try 3: Async fallback (fire-and-forget, cache replaced when ready)
     if (!_pgLoadStarted) {
       _pgLoadStarted = true;
-      const pgLoadPromise = initializePostgresDB()
+      initializePostgresDB()
         .then(() => loadDBFromPostgres())
         .then((pgData) => {
           if (pgData) {
@@ -866,24 +945,18 @@ export function getDB(): DBData {
               console.log('[DB] Replaced in-memory cache with PG data');
             }
             if (FS_WRITABLE) {
-              // Only write PG data to file if it doesn't exist yet.
-              // This optimization saves a PG round-trip on next cold start,
-              // but we DON'T overwrite if the file already has data
-              // (prevents overwriting user edits made before async completed).
               if (!fs.existsSync(DB_FILE)) {
                 fs.writeFileSync(DB_FILE, JSON.stringify(pgData, null, 2), 'utf-8');
-                console.log('[DB] Saved PG data to database.json for next startup');
+                console.log('[DB] Saved PG data to database.json');
               } else {
                 console.log('[DB] File exists — not overwriting with PG data');
               }
             }
           } else {
-            console.log('[DB] No data found in PostgreSQL either — seed was correct fallback');
+            console.log('[DB] No data found in PostgreSQL — seed was correct fallback');
           }
         })
         .catch(e => console.error('[DB] PG async load failed:', e));
-
-      // Don't block — return seed and let the async load replace cache later
     }
   }
 
