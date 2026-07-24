@@ -237,6 +237,18 @@ function startEagerPGLoad(): void {
         _pgEagerData = data;
         _pgEagerLoaded = true;
         console.log('[DB] Eager PG load completed (users:', data.users.length, 'sops:', data.sops.length, ')');
+        // 🛡️ If the 8s timeout expired and dbCache is still seed, replace it now
+        // This handles slow Neon cold starts (>8s) gracefully
+        if (!dbCache || (dbCache.users.length <= 3 && dbCache.sops.length <= 4)) {
+          migrateData(data);
+          _maxIdInitialized = false;
+          initMaxIds(data);
+          dbCache = data;
+          console.log('[DB] Eager PG load replaced seed cache (post-timeout recovery)');
+        }
+        if (FS_WRITABLE && !fs.existsSync(DB_FILE)) {
+          fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+        }
       } else {
         _pgEagerErrored = true;
         console.log('[DB] No data found in PostgreSQL');
