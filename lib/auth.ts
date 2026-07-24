@@ -10,7 +10,7 @@ export interface UserSession {
   username: string;
   email: string;
   role_id: number;
-  role_name: 'SUPER_ADMIN' | 'ADMIN' | 'SUPERVISOR' | 'AGENT';
+  role_name: 'ADMIN' | 'SUPERVISOR' | 'AGENT';
 }
 
 export function signUserToken(user: UserSession): string {

@@ -63,7 +63,6 @@ export default function PermissionsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [canEditPermissions, setCanEditPermissions] = useState(false);
 
   useEffect(() => {
     fetch('/api/auth')
@@ -81,19 +80,7 @@ export default function PermissionsPage() {
       });
   }, []);
 
-  // Determine edit permission dynamically from RBAC data
-  // SUPER_ADMIN bypasses all checks; other roles must have can_write=true for /settings/permissions
-  useEffect(() => {
-    if (!currentUser) return;
-    if (currentUser.role_name === 'SUPER_ADMIN') {
-      setCanEditPermissions(true);
-    } else if (permissions.length > 0) {
-      const myPerm = permissions.find(
-        (p: any) => p.role_id === currentUser.role_id && p.page_route === '/settings/permissions'
-      );
-      setCanEditPermissions(myPerm?.can_write || false);
-    }
-  }, [currentUser, permissions]);
+  const isAdmin = currentUser?.role_name === 'ADMIN';
 
   // Get permissions for the active role
   const activeRolePermissions = permissions.filter((p) => p.role_id === activeTab);
@@ -197,14 +184,14 @@ export default function PermissionsPage() {
 
         <button
           onClick={handleSaveAll}
-          disabled={isSaving || !canEditPermissions}
+          disabled={isSaving || !isAdmin}
           className={`px-6 py-2.5 rounded-xl text-xs flex items-center gap-2 shadow-lg transition-all ${
-            canEditPermissions
+            isAdmin
               ? 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold shadow-purple-600/30'
               : 'bg-slate-800 text-slate-500 cursor-not-allowed'
           }`}
         >
-          {canEditPermissions ? (
+          {isAdmin ? (
             savedSuccess ? (
               <>
                 <Check className="w-4 h-4 text-emerald-400" /> บันทึกสิทธิ์เรียบร้อย!
@@ -216,17 +203,17 @@ export default function PermissionsPage() {
             )
           ) : (
             <>
-              <ShieldCheck className="w-4 h-4" /> เฉพาะผู้มีสิทธิ์เท่านั้น
+              <ShieldCheck className="w-4 h-4" /> เฉพาะ Admin เท่านั้น
             </>
           )}
         </button>
       </div>
 
-      {/* Read-only notice for non-privileged */}
-      {!canEditPermissions && currentUser && (
+      {/* Read-only notice for non-Admin */}
+      {!isAdmin && currentUser && (
         <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-400">
           <ShieldCheck className="w-4 h-4 shrink-0" />
-          <span>คุณมีสิทธิ์ดูข้อมูลเท่านั้น — เฉพาะผู้ดูแลระบบ (Super Admin / Admin) เท่านั้นที่แก้ไขได้</span>
+          <span>คุณมีสิทธิ์ดูข้อมูลเท่านั้น — เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่แก้ไขได้</span>
         </div>
       )}
 
@@ -235,9 +222,6 @@ export default function PermissionsPage() {
         {availableRoles.map((role) => {
           const isActive = activeTab === role.id;
           const tabColors: Record<string, string> = {
-            SUPER_ADMIN: isActive
-              ? 'border-amber-500 text-amber-300 bg-amber-500/10'
-              : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600',
             ADMIN: isActive
               ? 'border-purple-500 text-purple-300 bg-purple-500/10'
               : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600',
@@ -291,9 +275,7 @@ export default function PermissionsPage() {
         <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl">
           <div className="flex items-center gap-3">
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold shadow-lg ${
-              activeRoleObj.role_name === 'SUPER_ADMIN'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                : activeRoleObj.role_name === 'ADMIN'
+              activeRoleObj.role_name === 'ADMIN'
                 ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
                 : activeRoleObj.role_name === 'SUPERVISOR'
                 ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
@@ -309,7 +291,7 @@ export default function PermissionsPage() {
             </div>
           </div>
 
-          {canEditPermissions && (
+          {isAdmin && (
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-[10px] text-slate-500 mr-1">ดำเนินการทั้งหมด:</span>
               {PERM_LEVELS.map((lvl) => (
@@ -360,8 +342,10 @@ export default function PermissionsPage() {
                         {route}
                       </p>
                     </div>
-                  </div>                  {/* Permission Level Selector */}
-                      {canEditPermissions ? (
+                  </div>
+
+                  {/* Permission Level Selector */}
+                  {isAdmin ? (
                     <div className="flex items-center gap-1 flex-shrink-0">
                       {PERM_LEVELS.map((lvl) => {
                         const isSelected = level === lvl.value;
@@ -429,10 +413,10 @@ export default function PermissionsPage() {
                   </div>
                 </div>
 
-                {canEditPermissions ? (
+                {isAdmin ? (
                   <button
                     onClick={() => handleToggleCategoryRole(cat.id, activeTab)}
-                    disabled={!canEditPermissions}
+                    disabled={!isAdmin}
                     className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-[10px] font-semibold border transition-all flex items-center gap-1.5 ${
                       hasAccess
                         ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'

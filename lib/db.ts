@@ -17,7 +17,7 @@ export interface User {
 
 export interface Role {
   id: number;
-  role_name: 'SUPER_ADMIN' | 'ADMIN' | 'SUPERVISOR' | 'AGENT';
+  role_name: 'ADMIN' | 'SUPERVISOR' | 'AGENT';
 }
 
 export interface PagePermission {
@@ -424,17 +424,13 @@ function getInitialSeedData(): DBData {
   const pastExpireDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
 
   const roles: Role[] = [
-    { id: 0, role_name: 'SUPER_ADMIN' },
     { id: 1, role_name: 'ADMIN' },
     { id: 2, role_name: 'SUPERVISOR' },
     { id: 3, role_name: 'AGENT' },
   ];
 
   const users: User[] = [
-    // id: 0 = SUPER_ADMIN (bypasses ALL RBAC checks — has access to everything)
-    // id: 1 = ADMIN (follows RBAC page_permissions like other roles)
-    // id: 2 = SUPERVISOR, id: 3 = AGENT
-    { id: 1, username: 'super_admin', email: 'admin@company.com', password_hash: passwordHash, role_id: 0, is_active: true, created_at: now },
+    { id: 1, username: 'admin', email: 'admin@company.com', password_hash: passwordHash, role_id: 1, is_active: true, created_at: now },
     { id: 2, username: 'supervisor', email: 'sup@company.com', password_hash: passwordHash, role_id: 2, is_active: true, created_at: now },
     { id: 3, username: 'agent', email: 'agent@company.com', password_hash: passwordHash, role_id: 3, is_active: true, created_at: now },
   ];

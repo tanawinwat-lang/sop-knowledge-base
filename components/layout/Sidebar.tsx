@@ -24,7 +24,7 @@ import {
   Database,
 } from 'lucide-react';
 interface SidebarProps {
-  userRole: 'SUPER_ADMIN' | 'ADMIN' | 'SUPERVISOR' | 'AGENT';
+  userRole: 'ADMIN' | 'SUPERVISOR' | 'AGENT';
   username: string;
   pagePermissions?: any[];
   isOpenMobile?: boolean;
@@ -37,8 +37,6 @@ export function Sidebar({ userRole, username, pagePermissions = [], isOpenMobile
   // Dynamic permission helper — checks page_permissions from RBAC database
   // Falls back to hardcoded role check if no DB permissions available (backward compat)
   const hasPageAccess = (route: string): boolean => {
-    // SUPER_ADMIN bypass — can access every page
-    if (userRole === 'SUPER_ADMIN') return true;
     if (pagePermissions.length > 0) {
       const perm = pagePermissions.find((p) => p.page_route === route);
       if (perm) return perm.can_access;
@@ -48,8 +46,6 @@ export function Sidebar({ userRole, username, pagePermissions = [], isOpenMobile
     return true;
   };
   const hasPageWrite = (route: string): boolean => {
-    // SUPER_ADMIN bypass — can write to every page
-    if (userRole === 'SUPER_ADMIN') return true;
     if (pagePermissions.length > 0) {
       const perm = pagePermissions.find((p) => p.page_route === route);
       if (perm) return perm.can_write;
@@ -132,7 +128,6 @@ export function Sidebar({ userRole, username, pagePermissions = [], isOpenMobile
   };
 
   const roleBadges: Record<string, { bg: string; text: string }> = {
-    SUPER_ADMIN: { bg: 'bg-amber-500/20 text-amber-300 border-amber-500/30', text: 'Super Admin' },
     ADMIN: { bg: 'bg-purple-500/20 text-purple-300 border-purple-500/30', text: 'Admin' },
     SUPERVISOR: { bg: 'bg-blue-500/20 text-blue-300 border-blue-500/30', text: 'Supervisor' },
     AGENT: { bg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30', text: 'Agent' },

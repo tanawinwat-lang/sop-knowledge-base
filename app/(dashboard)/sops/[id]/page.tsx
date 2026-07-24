@@ -134,9 +134,9 @@ export default function SOPDetailPage({ params }: { params: Promise<{ id: string
     );
   }
 
-  const canEdit = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || userRole === 'SUPERVISOR';
-  const canDelete = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || userRole === 'SUPERVISOR';
-  const canVerifyExpiry = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || userRole === 'SUPERVISOR';
+  const canEdit = userRole === 'ADMIN' || userRole === 'SUPERVISOR';
+  const canDelete = userRole === 'ADMIN' || userRole === 'SUPERVISOR';
+  const canVerifyExpiry = userRole === 'ADMIN' || userRole === 'SUPERVISOR';
 
   // Format content for rendering callout blocks, YouTube embeds, and images
   const renderFormattedContent = (content: string) => {

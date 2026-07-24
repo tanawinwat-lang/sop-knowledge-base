@@ -47,10 +47,10 @@ export default function SOPsPage() {
       .then((data) => setCategories(data.categories || []));
   }, []);
 
-  const canManageCategories = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || userRole === 'SUPERVISOR';
-  const canCreate = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || userRole === 'SUPERVISOR';
-  const canDelete = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || userRole === 'SUPERVISOR';
-  const canBulk = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || userRole === 'SUPERVISOR';
+  const canManageCategories = userRole === 'ADMIN' || userRole === 'SUPERVISOR';
+  const canCreate = userRole === 'ADMIN' || userRole === 'SUPERVISOR';
+  const canDelete = userRole === 'ADMIN' || userRole === 'SUPERVISOR';
+  const canBulk = userRole === 'ADMIN' || userRole === 'SUPERVISOR';
 
   const topLevelCats = categories.filter((c: any) => c.parent_id === null);
   const getChildCats = (parentId: number): any[] =>

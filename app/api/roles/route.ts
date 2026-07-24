@@ -10,8 +10,8 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const currentUser = await getCurrentUser();
-  if (!currentUser || (currentUser.role_name !== 'SUPER_ADMIN' && currentUser.role_name !== 'ADMIN')) {
-    return NextResponse.json({ error: 'ไม่มีสิทธิ์สร้างตำแหน่งใหม่ (เฉพาะ Super Admin / Admin)' }, { status: 403 });
+  if (!currentUser || currentUser.role_name !== 'ADMIN') {
+    return NextResponse.json({ error: 'ไม่มีสิทธิ์สร้างตำแหน่งใหม่ (เฉพาะ Admin)' }, { status: 403 });
   }
 
   try {

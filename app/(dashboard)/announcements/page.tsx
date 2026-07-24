@@ -96,8 +96,8 @@ export default function AnnouncementsPage() {
       });
   }, [fetchAnnouncements]);
 
-  const canCreate = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || userRole === 'SUPERVISOR';
-  const canDelete = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN';
+  const canCreate = userRole === 'ADMIN' || userRole === 'SUPERVISOR';
+  const canDelete = userRole === 'ADMIN';
 
   // Delete confirmation
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
