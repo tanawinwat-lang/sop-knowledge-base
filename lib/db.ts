@@ -816,7 +816,12 @@ export function getDB(): DBData {
       dbCache = data;
 
       // AUTO-SYNC: Fire-and-forget sync to PostgreSQL immediately on load
-      syncToPostgreSQL(data);
+      // IMPORTANT: Only sync if data has CUSTOM entries (not just seed).
+      // This prevents overwriting PG data with stale file data on cold start
+      // when async PG load hasn't completed yet.
+      if (data.users.length > 3 || data.sops.length > 4 || data.announcements.length > 2) {
+        syncToPostgreSQL(data);
+      }
 
       return data;
     } catch (readError) {
@@ -845,32 +850,45 @@ export function getDB(): DBData {
       fs.writeFileSync(DB_FILE, JSON.stringify(pgData, null, 2), 'utf-8');
       return pgData;
     }
-    // Async fallback
+    // Async fallback — runs AFTER getDB() returns if sync fails
     if (!_pgLoadStarted) {
       _pgLoadStarted = true;
-      initializePostgresDB()
+      const pgLoadPromise = initializePostgresDB()
         .then(() => loadDBFromPostgres())
         .then((pgData) => {
           if (pgData) {
             migrateData(pgData);
+            _maxIdInitialized = false;
             initMaxIds(pgData);
-            dbCache = pgData;
-            if (FS_WRITABLE) fs.writeFileSync(DB_FILE, JSON.stringify(pgData, null, 2), 'utf-8');
+            // Only replace cache if current data is still seed (no writes happened yet)
+            if (!dbCache || (dbCache.users.length <= 3 && dbCache.sops.length <= 4)) {
+              dbCache = pgData;
+              console.log('[DB] Replaced in-memory cache with PG data');
+            }
+            if (FS_WRITABLE) {
+              fs.writeFileSync(DB_FILE, JSON.stringify(pgData, null, 2), 'utf-8');
+              console.log('[DB] Saved PG data to database.json for next startup');
+            }
+          } else {
+            console.log('[DB] No data found in PostgreSQL either — seed was correct fallback');
           }
         })
         .catch(e => console.error('[DB] PG async load failed:', e));
+
+      // Don't block — return seed and let the async load replace cache later
     }
   }
 
-  // Step 4: Nothing found — create seed data
-  console.log('[DB] Creating fresh seed data');
+  // Step 4: Nothing found — create seed data (in-memory + file only!)
+  // IMPORTANT: Do NOT save seed to PostgreSQL here!
+  // If PG already has user data, saving seed would overwrite it.
+  // The periodic sync (every 60s) will detect that PG has no data
+  // and seed it then, OR the user's first create action will sync to PG.
+  console.log('[DB] Creating fresh seed data (PG NOT updated — preserved for next restart)');
   const seed = getInitialSeedData();
   initMaxIds(seed);
   dbCache = seed;
   if (FS_WRITABLE) fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf-8');
-  if (hasDBUrl()) {
-    saveDBToPostgres(seed).catch(e => console.error('[DB] Seed save to PG failed:', e));
-  }
   return seed;
 }
 
@@ -928,9 +946,33 @@ export function saveDB(data: DBData): void {
     fs.renameSync(tmpFile, DB_FILE);
   }
   if (hasDBUrl()) {
-    saveDBToPostgres(data).catch(err =>
-      console.error('[DB] Failed to persist to PostgreSQL:', err)
-    );
+    // Retry PG sync up to 3 times if it fails (handles Neon cold start)
+    const retrySync = (attempt: number) => {
+      saveDBToPostgres(data)
+        .then((saved) => {
+          if (saved) {
+            data.db_config = data.db_config || {};
+            data.db_config.last_sync_at = new Date().toISOString();
+            data.db_config.pg_connected = true;
+          } else if (attempt < 3) {
+            console.log(`[DB] PG sync attempt ${attempt} failed, retrying in 2s...`);
+            setTimeout(() => retrySync(attempt + 1), 2000);
+          } else {
+            console.error('[DB] PG sync failed after 3 attempts');
+            if (data.db_config) data.db_config.pg_connected = false;
+          }
+        })
+        .catch((err) => {
+          if (attempt < 3) {
+            console.log(`[DB] PG sync error (${err.message}), retrying in 2s...`);
+            setTimeout(() => retrySync(attempt + 1), 2000);
+          } else {
+            console.error('[DB] PG sync failed after 3 attempts:', err);
+            if (data.db_config) data.db_config.pg_connected = false;
+          }
+        });
+    };
+    retrySync(1);
   }
   dbCache = data;
 }
