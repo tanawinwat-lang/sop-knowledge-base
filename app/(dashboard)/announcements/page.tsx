@@ -381,7 +381,7 @@ export default function AnnouncementsPage() {
                         </span>
                       )}
                     </div>
-                    <div className="mt-2">{renderFormattedContent(ann.content)}</div>
+                    <div className="mt-2">{renderFormattedContent(ann.content.replace(/@sopimg:(\d+)/g, '/api/sops/image/$1'))}</div>
                     <div className="flex items-center gap-3 mt-3 text-[11px] text-slate-500">
                       <span className="flex items-center gap-1">
                         <User className="w-3 h-3" /> {ann.createdBy}
