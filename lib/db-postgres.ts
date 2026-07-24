@@ -105,8 +105,13 @@ async function query(text: string, params?: any[]): Promise<any[]> {
 }
 
 /**
- * Synchronous PostgreSQL load using child_process.execFileSync.
- * Used by getDB() on cold start to avoid returning seed data before async PG load finishes.
+ * Synchronous PostgreSQL load using a SEPARATE Node.js subprocess.
+ * Spawns a brand-new Node instance with its own event loop.
+ * This is the ONLY reliable way to do synchronous async work in Node.js.
+ * Used by getDB() on cold start to load PG data before returning.
+ *
+ * Uses process.execPath for guaranteed node binary resolution,
+ * and inherits parent env/cwd for module resolution.
  */
 export function loadDBFromPostgresSync(): DBData | null {
   const url = getDBUrl();
@@ -128,7 +133,11 @@ client.connect().then(() => {
   process.exit(1);
 });
 `;
-    const output = execFileSync('node', ['-e', script], {
+    // Use process.execPath for guaranteed node binary resolution on any platform
+    // Explicit env/cwd ensures the child process can resolve require('pg') correctly
+    const output = execFileSync(process.execPath, ['-e', script], {
+      cwd: process.cwd(),
+      env: { ...process.env },
       timeout: 30000,
       encoding: 'utf-8',
       maxBuffer: 50 * 1024 * 1024,
@@ -140,7 +149,13 @@ client.connect().then(() => {
     console.log('[PostgreSQL] Sync loaded data from database');
     return data;
   } catch (err) {
-    console.error('[PostgreSQL] Sync load failed:', err instanceof Error ? err.message : err);
+    // Log detailed error info for debugging
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const errCode = (err as any).code || '';
+    const errStatus = (err as any).status ?? '';
+    console.error('[PostgreSQL] Sync load failed:', errMsg, 
+      errCode ? '(code: ' + errCode + ')' : '',
+      errStatus !== '' ? '(exit: ' + errStatus + ')' : '');
     return null;
   }
 }

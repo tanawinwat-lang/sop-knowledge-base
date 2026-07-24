@@ -918,10 +918,20 @@ export function getDB(): DBData {
       const deadline = Date.now() + 8000;
       let waitedMs = 0;
       while (!_pgEagerLoaded && !_pgEagerErrored && Date.now() < deadline) {
-        try { execSync('sleep 0.2', { stdio: 'ignore', timeout: 1000 }); } catch {
-          // sleep not available (Windows) — use busy wait to avoid infinite spin
+        // Spawn a child Node process that waits 200ms.
+        // While execSync waits for it, libuv processes I/O events and their
+        // JavaScript callbacks (Neon pool connect, PG queries).
+        // This allows the eager PG load's async chain to make progress.
+        // Using process.execPath is platform-safe (unlike 'sleep' which may
+        // not be available on all Docker images).
+        try {
+          execSync(`"${process.execPath}" -e "setTimeout(()=>{},200)"`, { 
+            stdio: 'ignore', timeout: 1000 
+          });
+        } catch {
+          // Fallback: brief busy wait (only reaches here in extreme edge cases)
           const pause = Date.now();
-          while (Date.now() - pause < 50) {}
+          while (Date.now() - pause < 10) {}
         }
         waitedMs += 200;
       }
