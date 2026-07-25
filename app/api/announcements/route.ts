@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
-import { getDB, saveDB, logAudit, getNextId } from '@/lib/db';
+import { getDB, saveDB, saveDBWait, logAudit, getNextId } from '@/lib/db';
 import { canWritePage } from '@/lib/rbac';
 import type { Announcement } from '@/lib/db';
 
@@ -80,7 +80,7 @@ export async function POST(req: Request) {
     };
 
     db.announcements.push(newAnn);
-    saveDB(db);
+    await saveDBWait(db);
     logAudit(user.id, user.username, 'CREATE_ANNOUNCEMENT', `Announcement #${newId}`, `สร้างประกาศ: ${title}`);
 
     return NextResponse.json({ announcement: { ...newAnn, isRead: false, acknowledged: false, commentCount: 0, createdBy: user.username } });

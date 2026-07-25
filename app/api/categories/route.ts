@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { filterCategoriesForRole, canWritePage } from '@/lib/rbac';
-import { getDB, saveDB, logAudit, Category, getNextId } from '@/lib/db';
+import { getDB, saveDB, saveDBWait, logAudit, Category, getNextId } from '@/lib/db';
 
 export async function GET() {
   const user = await getCurrentUser();
@@ -38,7 +38,7 @@ export async function POST(req: Request) {
     };
 
     db.categories.push(newCat);
-    saveDB(db);
+    await saveDBWait(db);
 
     logAudit(user.id, user.username, 'CREATE_CATEGORY', `Folder #${newId}`, `สร้างหมวดหมู่ใหม่: ${name}`);
 

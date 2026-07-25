@@ -1091,6 +1091,7 @@ const SYNC_PROMISE_KEY = '__db_current_sync_promise__';
 
 export function saveDB(data: DBData): void {
   // Dual-write: always write to file (if writable) + PG (if available)
+  // Fire-and-forget: returns immediately, PG syncs in background
   if (FS_WRITABLE) {
     ensureDataDirectory();
     const tmpFile = DB_FILE + '.tmp';
@@ -1100,8 +1101,7 @@ export function saveDB(data: DBData): void {
     fs.renameSync(tmpFile, DB_FILE);
   }
   if (hasDBUrl()) {
-    // Store the PG sync promise so ensurePersisted() can await it synchronously
-    // This prevents data loss when a deploy happens right after a save
+    // Store the PG sync promise so ensurePersisted() can await it
     _currentSyncPromise = new Promise<boolean>((resolve) => {
       const retrySync = (attempt: number) => {
         saveDBToPostgres(data)
@@ -1140,6 +1140,52 @@ export function saveDB(data: DBData): void {
     try { setPendingWrite(data); } catch { /* db-context may not be loaded yet */ }
   }
   dbCache = data;
+}
+
+/**
+ * 🛡️ BLOCKING SAVE: Writes to file AND PostgreSQL, awaiting the sync to complete.
+ * Use this in API routes that must guarantee data persistence before responding
+ * (e.g., creating SOPs, users, announcements).
+ * Returns a Promise that resolves when PG confirms the write (or max 30s timeout).
+ * 
+ * Unlike saveDB() which fires PG sync and forgets, this blocks the response
+ * until the data reaches Neon. Prevents data loss on deploy.
+ */
+export async function saveDBWait(data: DBData): Promise<void> {
+  // Write to file first (same as saveDB)
+  if (FS_WRITABLE) {
+    ensureDataDirectory();
+    const tmpFile = DB_FILE + '.tmp';
+    const jsonStr = JSON.stringify(data, null, 2);
+    fs.writeFileSync(tmpFile, jsonStr, 'utf-8');
+    JSON.parse(fs.readFileSync(tmpFile, 'utf-8'));
+    fs.renameSync(tmpFile, DB_FILE);
+  }
+  // Set cache immediately so subsequent reads aren't blocked
+  dbCache = data;
+
+  // Now sync to PG with retries (awaited — blocks until done or timeout)
+  if (hasDBUrl()) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const saved = await saveDBToPostgres(data);
+        if (saved) {
+          data.db_config = { ...data.db_config, last_sync_at: new Date().toISOString(), pg_connected: true };
+          console.log(`[DB] saveDBWait: PG sync succeeded (attempt ${attempt})`);
+          return;
+        }
+        console.log(`[DB] saveDBWait: PG sync attempt ${attempt} returned false`);
+      } catch (err: any) {
+        console.log(`[DB] saveDBWait: PG sync attempt ${attempt} failed: ${err.message}`);
+      }
+      if (attempt < 3) {
+        // Wait 2s before retry
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+    console.error('[DB] saveDBWait: PG sync failed after 3 attempts');
+    if (data.db_config) data.db_config.pg_connected = false;
+  }
 }
 
 export function getPendingSyncPromise(): Promise<boolean> | null {

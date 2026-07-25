@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDB, saveDB, logAudit, generateSimpleEmbedding, TrashSOP } from '@/lib/db';
+import { getDB, saveDB, saveDBWait, logAudit, generateSimpleEmbedding, TrashSOP } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth';
 import { filterCategoriesForRole, canWritePage, canDeletePage, canAccessPage } from '@/lib/rbac';
 import { createSOPAnnouncement } from '@/lib/announcement';
@@ -80,7 +80,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     currentSOP.updated_at = now;
 
     db.sops[index] = currentSOP;
-    saveDB(db);
+    await saveDBWait(db);
 
     logAudit(user.id, user.username, 'UPDATE_SOP', `SOP #${id}`, `อัปเดตเวอร์ชัน SOP เป็น v${currentSOP.version}`);
 
@@ -121,7 +121,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     deleted_by_username: user.username,
   };
   db.trash_sops.unshift(trashEntry);
-  saveDB(db);
+  await saveDBWait(db);
 
   logAudit(user.id, user.username, 'TRASH_SOP', `SOP #${id}`, `ย้ายเอกสารไปถังขยะ: ${sopToTrash.title}`);
 

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDB, saveDB, logAudit } from '@/lib/db';
+import { getDB, saveDB, saveDBWait, logAudit } from '@/lib/db';
 import { getCurrentUser } from '@/lib/auth';
 import { canWritePage, canDeletePage } from '@/lib/rbac';
 import bcrypt from 'bcryptjs';
@@ -26,7 +26,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     if (password !== undefined) user.password_hash = bcrypt.hashSync(password, 10);
     if (is_active !== undefined) user.is_active = is_active;
 
-    saveDB(db);
+    await saveDBWait(db);
 
     const role = db.roles.find((r) => r.id === user.role_id);
     const statusChange = is_active !== undefined ? `, สถานะ: ${is_active ? 'Active' : 'Inactive'}` : '';
@@ -60,7 +60,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   }
 
   const removed = db.users.splice(index, 1)[0];
-  saveDB(db);
+  await saveDBWait(db);
 
   logAudit(currentUser.id, currentUser.username, 'DELETE_USER', `User #${id}`, `ลบผู้ใช้งาน ${removed.username}`);
 
