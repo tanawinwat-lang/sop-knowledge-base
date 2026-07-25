@@ -72,11 +72,9 @@ function sanitizeDB(db: any) {
   // Deep clone to avoid mutating the cached DB
   const clone = JSON.parse(JSON.stringify(db));
 
-  // Remove volatile db_config fields
-  if (clone.db_config) {
-    delete clone.db_config.last_sync_at;
-    delete clone.db_config.pg_connected;
-  }
+  // Remove ALL db_config fields (runtime metadata only, not operational data)
+  // This also prevents leaking the Neon DB connection string to the public repo
+  delete clone.db_config;
 
   return clone;
 }
