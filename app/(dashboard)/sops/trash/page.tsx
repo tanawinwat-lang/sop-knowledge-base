@@ -3,12 +3,14 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Trash2, RefreshCw, Clock, User, CalendarDays, AlertTriangle, Loader2, FileText, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { Trash2, RefreshCw, Clock, User, CalendarDays, AlertTriangle, Loader2, FileText, ArrowLeft, CheckCircle2, Skull, X } from 'lucide-react';
 
 export default function TrashPage() {
   const [trashItems, setTrashItems] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [restoringId, setRestoringId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const router = useRouter();
 
   const fetchTrash = () => {
@@ -35,6 +37,18 @@ export default function TrashPage() {
       }
     } catch {}
     setRestoringId(null);
+  };
+
+  const handlePermanentDelete = async (id: number) => {
+    setDeletingId(id);
+    setConfirmDelete(null);
+    try {
+      const res = await fetch(`/api/sops/${id}/permanently-delete`, { method: 'POST' });
+      if (res.ok) {
+        setTrashItems((prev) => prev.filter((t) => t.sop.id !== id));
+      }
+    } catch {}
+    setDeletingId(null);
   };
 
   const daysUntilPermanentDelete = (deletedAt: string) => {
@@ -115,24 +129,94 @@ export default function TrashPage() {
                     )}
                   </div>
 
-                  <button
-                    onClick={() => handleRestore(item.sop.id)}
-                    disabled={restoringId === item.sop.id}
-                    className="flex-shrink-0 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow-lg shadow-emerald-600/20 transition-all"
-                  >
-                    {restoringId === item.sop.id ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <RefreshCw className="w-3.5 h-3.5" />
-                    )}
-                    <span>กู้คืน</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleRestore(item.sop.id)}
+                      disabled={restoringId === item.sop.id}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 shadow-lg shadow-emerald-600/20 transition-all"
+                    >
+                      {restoringId === item.sop.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      )}
+                      <span>กู้คืน</span>
+                    </button>
+                    <button
+                      onClick={() => setConfirmDelete(item.sop.id)}
+                      disabled={deletingId === item.sop.id}
+                      className="px-4 py-2 bg-rose-600/20 hover:bg-rose-600/40 disabled:opacity-30 text-rose-400 hover:text-rose-300 text-xs font-semibold rounded-xl flex items-center gap-1.5 border border-rose-500/20 hover:border-rose-500/40 transition-all"
+                    >
+                      {deletingId === item.sop.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Skull className="w-3.5 h-3.5" />
+                      )}
+                      <span>ลบถาวร</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             );
           })
         )}
       </div>
+
+      {/* Permanent Delete Confirmation Modal */}
+      {confirmDelete !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setConfirmDelete(null)}
+          />
+          <div className="relative bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl">
+            <button
+              onClick={() => setConfirmDelete(null)}
+              className="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-all"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-500/20 flex items-center justify-center">
+                  <Skull className="w-5 h-5 text-rose-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-100">ยืนยันการลบถาวร</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">การดำเนินการนี้ไม่สามารถกู้คืนได้</p>
+                </div>
+              </div>
+              <div className="bg-slate-800/50 rounded-xl px-4 py-3 border border-slate-700">
+                <p className="text-xs text-slate-300">
+                  ต้องการลบ <span className="font-semibold text-rose-400">"{trashItems.find((t) => t.sop.id === confirmDelete)?.sop?.title || ''}"</span> ถาวร?
+                </p>
+                <p className="text-[11px] text-slate-500 mt-1">เอกสารนี้จะถูกลบออกจากระบบทันทีและไม่สามารถกู้คืนได้</p>
+              </div>
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  onClick={() => setConfirmDelete(null)}
+                  className="flex-1 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl border border-slate-700 transition-all"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  onClick={() => handlePermanentDelete(confirmDelete)}
+                  className="flex-1 px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-xl shadow-lg shadow-rose-600/20 transition-all"
+                >
+                  {deletingId === confirmDelete ? (
+                    <span className="flex items-center justify-center gap-1.5">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      กำลังลบ...
+                    </span>
+                  ) : (
+                    'ยืนยัน ลบถาวร'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
