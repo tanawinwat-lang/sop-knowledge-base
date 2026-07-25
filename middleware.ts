@@ -17,7 +17,6 @@ export function middleware(req: NextRequest) {
   if (
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api/auth') ||
-    pathname.startsWith('/api/diagnostic') ||
     pathname.startsWith('/login') ||
     pathname === '/403' ||
     pathname.includes('.')
