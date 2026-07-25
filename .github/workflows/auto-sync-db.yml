@@ -23,6 +23,9 @@ jobs:
           DB_EXPORT_KEY="${{ secrets.DB_EXPORT_KEY }}"
           RENDER_URL="${{ vars.RENDER_URL || 'https://sop-knowledge-base.onrender.com' }}"
 
+          echo "🔍 Debug: DB_EXPORT_KEY length=${#DB_EXPORT_KEY}"
+          echo "🔍 Debug: RENDER_URL=$RENDER_URL"
+
           if [ -z "$DB_EXPORT_KEY" ]; then
             echo "❌ DB_EXPORT_KEY secret not set!"
             echo "Set it in GitHub → Settings → Secrets and variables → Actions"
@@ -31,24 +34,26 @@ jobs:
 
           echo "✅ Exporting database from $RENDER_URL..."
 
-          # Export full database using API key
-          curl -s --max-time 30 \
+          # Export full database using API key — capture HTTP status code
+          HTTP_CODE=$(curl -s -w '%{http_code}' --max-time 60 \
             "$RENDER_URL/api/db/export?key=$DB_EXPORT_KEY" \
-            -o /tmp/db_export.json
+            -o /tmp/db_export.json 2>&1)
+          echo "🔍 Debug: curl HTTP status=$HTTP_CODE"
 
-          # Validate the export
-          USERS=$(python3 -c "import json; d=json.load(open('/tmp/db_export.json')); print(d['stats']['users'])" 2>/dev/null || echo "0")
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ API returned HTTP $HTTP_CODE"
+            cat /tmp/db_export.json | head -c 500
+            exit 1
+          fi
+
+          # Validate the export using jq (pre-installed on ubuntu-latest)
+          USERS=$(jq -r '.stats.users // 0' /tmp/db_export.json 2>/dev/null || echo "0")
           if [ "$USERS" -gt 0 ]; then
             echo "✅ Exported $USERS users from production"
 
-            # Extract just the 'data' field (the full DB)
-            python3 -c "
-import json
-d = json.load(open('/tmp/db_export.json'))
-with open('data/database.json', 'w', encoding='utf-8') as f:
-    json.dump(d['data'], f, ensure_ascii=False, indent=2)
-print('✅ Written to data/database.json')
-" 2>&1
+            # Extract just the 'data' field (the full DB) using jq
+            jq '.data' /tmp/db_export.json > data/database.json
+            echo "✅ Written to data/database.json"
           else
             echo "❌ Export returned 0 users, skipping update"
             cat /tmp/db_export.json | head -c 500
