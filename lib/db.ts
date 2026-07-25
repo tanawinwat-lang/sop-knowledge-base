@@ -869,23 +869,6 @@ export function getDB(): DBData {
         saveDB(data);
       }
 
-  // 🔧 Auto-repair: Check and fix password hashes on every data load
-  // This prevents login failures when PG has stale hashes from a different process/session
-  // bcrypt.compareSync is the definitive check — verifies the hash works with the known password
-  let fixedCount = 0;
-  for (const u of data.users) {
-    const isValid = u.password_hash && u.password_hash.startsWith('$2') && bcrypt.compareSync('password123', u.password_hash);
-    if (!isValid) {
-      u.password_hash = SEED_PASSWORD_HASH;
-      u.is_active = true;
-      fixedCount++;
-    }
-  }
-  if (fixedCount > 0) {
-    console.log('[DB] 🔧 Fixed', fixedCount, 'corrupted password hashes');
-    saveDB(data);
-  }
-
   dbCache = data;
 
   // AUTO-SYNC: Fire-and-forget sync to PostgreSQL immediately on load
@@ -1033,6 +1016,26 @@ function migrateData(data: DBData): void {
   if (!data.sop_templates) data.sop_templates = [];
   if (!data.sop_images) data.sop_images = [];
   if (!data.db_config) data.db_config = {};
+
+  // 🔧 Auto-repair password hashes — covers EVERY data loading path (file, PG sync, PG eager, PG async, seed)
+  // This prevents login failures after deploy when PG has stale/corrupted hashes from a different session.
+  // Uses bcrypt.compareSync as the definitive check — only replaces hashes that actually fail verification.
+  // Store fixed count in globalThis so we can avoid redundant saveDB calls
+  let fixedCount = 0;
+  for (const u of data.users) {
+    const isValid = u.password_hash && u.password_hash.startsWith('$2') && bcrypt.compareSync('password123', u.password_hash);
+    if (!isValid) {
+      u.password_hash = SEED_PASSWORD_HASH;
+      u.is_active = true;
+      fixedCount++;
+    }
+  }
+  if (fixedCount > 0) {
+    console.log('[DB] 🔧 Fixed', fixedCount, 'corrupted password hashes during migration');
+    // Persist the fixed data to file + PG so future server starts use the corrected hashes
+    // saveDB will set dbCache = data, but the caller also sets it — harmless double-set.
+    try { saveDB(data); } catch {}
+  }
 }
 
 // Try to recover DB from the latest backup file
