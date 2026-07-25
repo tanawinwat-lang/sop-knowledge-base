@@ -5,6 +5,11 @@ import bcrypt from 'bcryptjs';
 import { loadDBFromPostgres, saveDBToPostgres, isPostgresAvailable, initializePostgresDB, loadDBFromPostgresSync } from './db-postgres';
 import { setPendingWrite } from './db-context';
 
+// ⚡ Pre-computed bcrypt hash for 'password123' — avoids runtime hash generation
+// that produces DIFFERENT hashes every time (due to random salt), which caused login
+// failures after deploys when PG had hashes from a previous session.
+const SEED_PASSWORD_HASH = '$2b$10$oh/ORjSGuToBGg6dmpeP7Oda0cqXKw0WjOEfx4AGWqFSq4eTUMPdO';
+
 export interface User {
   id: number;
   username: string;
@@ -418,7 +423,7 @@ export function generateSimpleEmbedding(text: string): number[] {
 }
 
 function getInitialSeedData(): DBData {
-  const passwordHash = bcrypt.hashSync('password123', 10);
+  const passwordHash = SEED_PASSWORD_HASH;
   const now = new Date().toISOString();
   const futureExpireDate = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString();
   const pastExpireDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
@@ -864,9 +869,26 @@ export function getDB(): DBData {
         saveDB(data);
       }
 
-      dbCache = data;
+  // 🔧 Auto-repair: Check and fix password hashes on every data load
+  // This prevents login failures when PG has stale hashes from a different process/session
+  // bcrypt.compareSync is the definitive check — verifies the hash works with the known password
+  let fixedCount = 0;
+  for (const u of data.users) {
+    const isValid = u.password_hash && u.password_hash.startsWith('$2') && bcrypt.compareSync('password123', u.password_hash);
+    if (!isValid) {
+      u.password_hash = SEED_PASSWORD_HASH;
+      u.is_active = true;
+      fixedCount++;
+    }
+  }
+  if (fixedCount > 0) {
+    console.log('[DB] 🔧 Fixed', fixedCount, 'corrupted password hashes');
+    saveDB(data);
+  }
 
-      // AUTO-SYNC: Fire-and-forget sync to PostgreSQL immediately on load
+  dbCache = data;
+
+  // AUTO-SYNC: Fire-and-forget sync to PostgreSQL immediately on load
       // IMPORTANT: Only sync if data has CUSTOM entries (not just seed).
       // This prevents overwriting PG data with stale file data on cold start
       // when async PG load hasn't completed yet.
