@@ -1,9 +1,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   HardDrive, Download, RotateCcw, Trash2, Plus, Loader2,
   Check, X, AlertTriangle, FileText, Calendar, Clock, Database,
+  Upload, CloudUpload, FileJson,
 } from 'lucide-react';
 
 interface BackupItem {
@@ -25,6 +27,13 @@ export default function BackupsPage() {
   const [deletingFile, setDeletingFile] = useState<string | null>(null);
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Upload state
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [showUploadConfirm, setShowUploadConfirm] = useState(false);
+  const [uploadedDataInfo, setUploadedDataInfo] = useState<{ users: number; sops: number } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchBackups = async () => {
     try {
@@ -111,6 +120,74 @@ export default function BackupsPage() {
     window.open(`/api/backups/download/${encodeURIComponent(filename)}`, '_blank');
   };
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.endsWith('.json')) {
+      showMessage('error', 'กรุณาเลือกไฟล์ .json เท่านั้น');
+      return;
+    }
+    setUploadedFile(file);
+
+    // Preview file contents to confirm
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const content = JSON.parse(event.target?.result as string);
+        if (!content.users || !content.sops) {
+          showMessage('error', 'ไฟล์ไม่ใช่ Backup ที่ถูกต้อง — ต้องมี users และ sops');
+          setUploadedFile(null);
+          return;
+        }
+        setUploadedDataInfo({
+          users: content.users?.length || 0,
+          sops: content.sops?.length || 0,
+        });
+        setShowUploadConfirm(true);
+      } catch {
+        showMessage('error', 'ไฟล์ JSON ไม่ถูกต้อง');
+        setUploadedFile(null);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleUploadRestore = async () => {
+    if (!uploadedFile) return;
+    setIsUploading(true);
+    setShowUploadConfirm(false);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        try {
+          const content = JSON.parse(event.target?.result as string);
+          const res = await fetch('/api/backups/upload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: content }),
+          });
+          const data = await res.json();
+          if (res.ok) {
+            showMessage('success', `✅ อัปโหลดและกู้คืนสำเร็จ! ผู้ใช้ ${data.restored?.users || 0} ราย, SOP ${data.restored?.sops || 0} ฉบับ`);
+            fetchBackups();
+          } else {
+            showMessage('error', data.error || 'อัปโหลดไม่สำเร็จ');
+          }
+        } catch {
+          showMessage('error', 'ไม่สามารถอ่านไฟล์ JSON ได้');
+        }
+        setIsUploading(false);
+        setUploadedFile(null);
+        setUploadedDataInfo(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      };
+      reader.readAsText(uploadedFile);
+    } catch {
+      showMessage('error', 'เกิดข้อผิดพลาดในการอัปโหลด');
+      setIsUploading(false);
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-16">
       {/* Header */}
@@ -121,24 +198,44 @@ export default function BackupsPage() {
             <span>จัดการ Backup ฐานข้อมูล</span>
           </h1>
           <p className="text-xs text-slate-400 mt-1">
-            สำรองและคืนค่าข้อมูล database.json — backup จะถูกสร้างอัตโนมัติทุกวันเวลา 22:00 น. (กำหนดการตามเซิร์ฟเวอร์)
+            สำรองและคืนค่าข้อมูล — backup จะถูกสร้างอัตโนมัติทุกวันเวลา 22:00 น.
           </p>
         </div>
 
-        <button
-          onClick={handleCreateBackup}
-          disabled={isCreating}
-          className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-semibold rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-indigo-600/30 transition-all disabled:opacity-50 self-start sm:self-auto"
-        >
-          {isCreating ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : createSuccess ? (
-            <Check className="w-4 h-4 text-emerald-400" />
-          ) : (
-            <Plus className="w-4 h-4" />
-          )}
-          {isCreating ? 'กำลังสร้าง...' : createSuccess ? 'สร้างสำเร็จ!' : 'สร้าง Backup ตอนนี้'}
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          {/* Upload Backup Button */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            className="px-4 py-2.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 font-semibold rounded-xl text-xs flex items-center gap-2 border border-amber-500/30 shadow-lg shadow-amber-600/10 transition-all disabled:opacity-50"
+          >
+            <Upload className="w-4 h-4" />
+            อัปโหลด Backup
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json"
+            onChange={handleFileSelect}
+            className="hidden"
+          />
+
+          {/* Create Backup Button */}
+          <button
+            onClick={handleCreateBackup}
+            disabled={isCreating}
+            className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-semibold rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-indigo-600/30 transition-all disabled:opacity-50"
+          >
+            {isCreating ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : createSuccess ? (
+              <Check className="w-4 h-4 text-emerald-400" />
+            ) : (
+              <Plus className="w-4 h-4" />
+            )}
+            {isCreating ? 'กำลังสร้าง...' : createSuccess ? 'สร้างสำเร็จ!' : 'สร้าง Backup ตอนนี้'}
+          </button>
+        </div>
       </div>
 
       {/* Status Message */}
@@ -300,6 +397,54 @@ export default function BackupsPage() {
           </div>
         )}
       </div>
+
+      {/* Upload Confirm Modal */}
+      {showUploadConfirm && uploadedDataInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="relative w-full max-w-sm bg-slate-900 border border-slate-700 rounded-xl p-6 shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-amber-500/10 border border-amber-500/20 rounded-xl">
+                <CloudUpload className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-slate-100">ยืนยันการกู้คืนจากไฟล์</h4>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  ข้อมูลปัจจุบันจะถูกสำรองก่อนกู้คืน
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-800/50 rounded-xl px-4 py-3 border border-slate-700 space-y-2 mb-4">
+              <p className="text-xs text-slate-300 font-semibold">ไฟล์ที่เลือก: <span className="text-sky-300">{uploadedFile?.name}</span></p>
+              <div className="flex items-center gap-4 text-[11px] text-slate-400">
+                <span>👥 ผู้ใช้ {uploadedDataInfo.users} ราย</span>
+                <span>📄 SOP {uploadedDataInfo.sops} ฉบับ</span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => { setShowUploadConfirm(false); setUploadedFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
+                className="flex-1 px-3 py-2 text-xs font-semibold text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={handleUploadRestore}
+                disabled={isUploading}
+                className="flex-1 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+              >
+                {isUploading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <CloudUpload className="w-3.5 h-3.5" />
+                )}
+                {isUploading ? 'กำลังกู้คืน...' : 'ยืนยัน กู้คืนข้อมูล'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Restore Warning Modal */}
       {confirmRestore && (
