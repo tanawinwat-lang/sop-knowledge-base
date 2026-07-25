@@ -32,6 +32,8 @@ import {
 export default function SOPDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [sop, setSop] = useState<any>(null);
+  const [createdByUsername, setCreatedByUsername] = useState<string>('');
+  const [updatedByUsername, setUpdatedByUsername] = useState<string | null>(null);
   const [userRole, setUserRole] = useState<string>('AGENT');
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [feedbackSent, setFeedbackSent] = useState(false);
@@ -58,7 +60,11 @@ export default function SOPDetailPage({ params }: { params: Promise<{ id: string
     fetch(`/api/sops/${id}`)
       .then((res) => res.json())
       .then((data) => {
-        if (data.sop) setSop(data.sop);
+        if (data.sop) {
+          setSop(data.sop);
+          setCreatedByUsername(data.created_by_username || `User #${data.sop.created_by}`);
+          setUpdatedByUsername(data.updated_by_username || null);
+        }
       });
   }, [id]);
 
@@ -376,7 +382,11 @@ export default function SOPDetailPage({ params }: { params: Promise<{ id: string
 
           <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400 border-y border-slate-800/80 py-3">
             <span className="flex items-center gap-1.5">
-              <User className="w-3.5 h-3.5 text-indigo-400" /> สร้างโดย: {sop.created_by === 1 ? 'Admin' : 'Supervisor'}
+              <User className="w-3.5 h-3.5 text-indigo-400" />
+              {sop.updated_by && sop.updated_by !== sop.created_by && sop.status === 'PUBLISHED' && updatedByUsername
+                ? <>สร้างโดย: {createdByUsername} · อนุมัติโดย: {updatedByUsername}</>
+                : <>สร้างโดย: {createdByUsername}</>
+              }
             </span>
             <span className="flex items-center gap-1.5">
               <Calendar className="w-3.5 h-3.5 text-indigo-400" /> ปรับปรุงล่าสุด: {new Date(sop.updated_at).toLocaleDateString('th-TH')}

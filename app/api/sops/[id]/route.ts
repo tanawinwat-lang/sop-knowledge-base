@@ -23,7 +23,15 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     return NextResponse.json({ error: 'ไม่พบเอกสาร (คุณไม่มีสิทธิ์เข้าถึงหมวดหมู่นี้)' }, { status: 404 });
   }
 
-  return NextResponse.json({ sop });
+  // Resolve usernames for created_by and updated_by
+  const creator = db.users.find((u) => u.id === sop.created_by);
+  const updater = sop.updated_by ? db.users.find((u) => u.id === sop.updated_by) : null;
+
+  return NextResponse.json({
+    sop,
+    created_by_username: creator?.username || `User #${sop.created_by}`,
+    updated_by_username: updater?.username || null,
+  });
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
