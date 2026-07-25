@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { FeedbackModal } from '@/components/feedback/FeedbackModal';
 import { SOPExpiryBadge } from '@/components/sops/SOPExpiryBadge';
 import { SOPMindMap } from '@/components/sops/SOPMindMap';
+import { renderWithFontSizes } from '@/lib/render-content';
 import {
   BookOpen,
   ThumbsUp,
@@ -312,7 +313,7 @@ export default function SOPDetailPage({ params }: { params: Promise<{ id: string
 
       return (
         <p key={idx} className="text-slate-300 text-sm md:text-base leading-relaxed my-2">
-          {renderParagraphWithLinks(block)}
+          {renderWithFontSizes(block, renderParagraphWithLinks)}
         </p>
       );
     });

@@ -22,6 +22,7 @@ import {
   AlignCenter,
   AlignRight,
   Maximize2,
+  Type,
 } from 'lucide-react';
 
 interface WYSIWYGEditorProps {
@@ -34,6 +35,7 @@ export function WYSIWYGEditor({ value, onChange, onOpenAICopilot }: WYSIWYGEdito
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [showImageDialog, setShowImageDialog] = useState(false);
   const [showLinkDialog, setShowLinkDialog] = useState(false);
+  const [showFontSizeMenu, setShowFontSizeMenu] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [imageUrlInput, setImageUrlInput] = useState('');
   const [imageAlignment, setImageAlignment] = useState<'left' | 'center' | 'right' | 'full'>('center');
@@ -303,6 +305,41 @@ export function WYSIWYGEditor({ value, onChange, onOpenAICopilot }: WYSIWYGEdito
       {/* Editor Toolbar */}
       <div className="flex flex-wrap items-center justify-between px-4 py-2.5 bg-slate-800 border-b border-slate-800 text-xs gap-2">
         <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Font Size Selector */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowFontSizeMenu(!showFontSizeMenu)}
+              className="p-2 text-slate-300 hover:bg-slate-700 rounded-lg flex items-center gap-1"
+              title="ปรับขนาดตัวอักษร"
+            >
+              <Type className="w-4 h-4 text-indigo-400" />
+              <span className="text-[10px] font-semibold hidden sm:inline">ขนาด</span>
+            </button>
+            {showFontSizeMenu && (
+              <div className="absolute top-full left-0 mt-1 z-30 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl p-1.5 w-40 grid grid-cols-3 gap-1" onMouseLeave={() => setShowFontSizeMenu(false)}>
+                {[10, 12, 14, 16, 18, 20, 24, 28, 32].map((size) => (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={() => {
+                      insertText(`<span style="font-size:${size}px">ข้อความ</span>`);
+                      setShowFontSizeMenu(false);
+                    }}
+                    className={`px-2 py-1.5 rounded-lg text-center hover:bg-indigo-600/30 text-slate-300 hover:text-white transition-all ${
+                      size === 36 ? 'col-span-2' : ''
+                    }`}
+                    style={{ fontSize: Math.min(size, 18) + 'px' }}
+                    title={`${size}px`}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="h-4 w-px bg-slate-700 mx-1" />
           <button
             type="button"
             onClick={() => insertText('\n# หัวข้อหลักใหม่\n')}

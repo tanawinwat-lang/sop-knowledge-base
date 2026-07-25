@@ -30,6 +30,7 @@ interface Comment {
   created_at: string;
 }
 
+import { renderWithFontSizes } from '@/lib/render-content';
 import { WYSIWYGEditor } from '@/components/sops/WYSIWYGEditor';
 
 interface AnnouncementItem {
@@ -298,7 +299,7 @@ export default function AnnouncementsPage() {
         });
       };
 
-      return <p key={idx} className="text-xs text-slate-300 leading-relaxed my-1.5">{renderLinks(block)}</p>;
+      return <p key={idx} className="text-xs text-slate-300 leading-relaxed my-1.5">{renderWithFontSizes(block, renderLinks)}</p>;
     });
   };
 
