@@ -831,7 +831,16 @@ export function getDB(): DBData {
           }
         }
       }
-      // Fix 2: Custom role sanity (can't write/delete without access, can't delete without write)
+      // Fix 2: Reset acknowledgments permission — AGENT (role_id=3) and custom roles (role_id>3) must be denied
+      for (const perm of data.page_permissions) {
+        if (perm.page_route === '/announcements/acknowledgments' && (perm.role_id === 3 || perm.role_id > 3)) {
+          if (perm.can_access !== false || perm.can_write !== false || perm.can_delete !== false) {
+            perm.can_access = false; perm.can_write = false; perm.can_delete = false;
+            needsRepair = true;
+          }
+        }
+      }
+      // Fix 3: Custom role sanity (can't write/delete without access, can't delete without write)
       for (const perm of data.page_permissions) {
         if (perm.role_id > 3) {
           if (!perm.can_access && (perm.can_write || perm.can_delete)) {

@@ -501,7 +501,7 @@
       "id": 55,
       "role_id": 3,
       "page_route": "/announcements/acknowledgments",
-      "can_access": true,
+      "can_access": false,
       "can_write": false,
       "can_delete": false
     },
