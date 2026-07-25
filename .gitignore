@@ -49,4 +49,6 @@ data/backup/
 *.tsbuildinfo
 next-env.d.ts
 
-.vercel
+# deploy trigger files (one-time setup)
+/scripts/setup-deploy-hook.js
+/.deploy*
