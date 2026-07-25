@@ -780,6 +780,16 @@ export function getDB(): DBData {
       const data = JSON.parse(raw) as DBData;
       // Backward compatibility
       migrateData(data);
+
+      // ⚡ Guard: reject empty data (0 users) — the file might be a stale snapshot
+      // with no users from a previous deploy. Fall through to PG or seed instead.
+      if (data.users.length === 0) {
+        console.log('[DB] database.json has 0 users — treating as empty, falling through to PG/seed');
+        // Don't delete the file — it might have backup value
+        // Just skip it and try PG or seed
+        throw new Error('Empty DB file (0 users)');
+      }
+
       initMaxIds(data);
 
       // Auto-cleanup: permanently delete trashed SOPs older than 30 days
@@ -883,7 +893,7 @@ export function getDB(): DBData {
     } catch (readError) {
       console.error('[DB] database.json corrupted, trying recovery...', readError);
       const recovered = tryRecoverFromBackup();
-      if (recovered) {
+      if (recovered && recovered.users.length > 0) {
         migrateData(recovered);
         initMaxIds(recovered);
         dbCache = recovered;
