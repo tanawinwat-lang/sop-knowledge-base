@@ -170,6 +170,7 @@ export interface DBConfig {
   db_url?: string;           // Stored DATABASE_URL for PostgreSQL persistence
   last_sync_at?: string;     // Last successful sync timestamp
   pg_connected?: boolean;    // Whether PG is currently connected
+  export_key?: string;       // API key for GitHub Actions auto-sync (set via Settings UI)
 }
 
 export interface DBData {

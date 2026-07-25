@@ -11,23 +11,27 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const apiKey = searchParams.get('key');
 
-    // Accept a DB_EXPORT_KEY if set as env var — used by GitHub Actions
-    const expectedKey = process.env.DB_EXPORT_KEY;
+    // Accept a DB_EXPORT_KEY from env var OR from db_config.export_key
+    // (db_config.export_key can be set via Settings → ตั้งค่าฐานข้อมูล)
+    const dbForAuth = getDB();
+    const envKey = process.env.DB_EXPORT_KEY;
+    const configKey = dbForAuth.db_config?.export_key;
+    const expectedKey = envKey || configKey;
+
     if (apiKey && expectedKey && apiKey === expectedKey) {
       // API key matched — skip user auth
-      const db = getDB();
       return NextResponse.json({
         exported_at: new Date().toISOString(),
         exported_by: 'api-key',
         stats: {
-          users: db.users.length,
-          sops: db.sops.length,
-          announcements: db.announcements.length,
-          announcement_reads: db.announcement_reads.length,
-          categories: db.categories.length,
-          page_permissions: db.page_permissions.length,
+          users: dbForAuth.users.length,
+          sops: dbForAuth.sops.length,
+          announcements: dbForAuth.announcements.length,
+          announcement_reads: dbForAuth.announcement_reads.length,
+          categories: dbForAuth.categories.length,
+          page_permissions: dbForAuth.page_permissions.length,
         },
-        data: sanitizeDB(db),
+        data: sanitizeDB(dbForAuth),
       });
     }
 

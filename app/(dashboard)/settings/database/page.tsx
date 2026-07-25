@@ -12,6 +12,9 @@ import {
   Eye,
   EyeOff,
   Trash2,
+  KeyRound,
+  Copy,
+  CheckCheck,
 } from 'lucide-react';
 
 export default function DatabaseSettingsPage() {
@@ -23,8 +26,16 @@ export default function DatabaseSettingsPage() {
   const [restoring, setRestoring] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
+  // Export Key state
+  const [exportKeyStatus, setExportKeyStatus] = useState<{ hasExportKey: boolean; source: string } | null>(null);
+  const [newExportKey, setNewExportKey] = useState('');
+  const [showExportKey, setShowExportKey] = useState(false);
+  const [savingExportKey, setSavingExportKey] = useState(false);
+  const [copied, setCopied] = useState(false);
+
   useEffect(() => {
     fetchStatus();
+    fetchExportKeyStatus();
   }, []);
 
   const fetchStatus = async () => {
@@ -44,6 +55,69 @@ export default function DatabaseSettingsPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const fetchExportKeyStatus = async () => {
+    try {
+      const res = await fetch('/api/settings/db-export-key');
+      if (res.ok) {
+        const data = await res.json();
+        setExportKeyStatus(data);
+      }
+    } catch { /* ignore */ }
+  };
+
+  const generateSecureKey = () => {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    let key = '';
+    for (let i = 0; i < 40; i++) {
+      key += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setNewExportKey(key);
+  };
+
+  const handleSaveExportKey = async () => {
+    if (!newExportKey.trim()) return;
+    setSavingExportKey(true);
+    setMessage(null);
+    try {
+      const res = await fetch('/api/settings/db-export-key', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: newExportKey.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMessage({ type: 'success', text: data.message });
+        await fetchExportKeyStatus();
+      } else {
+        setMessage({ type: 'error', text: data.error || '❌ เกิดข้อผิดพลาด' });
+      }
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || '❌ เกิดข้อผิดพลาด' });
+    } finally {
+      setSavingExportKey(false);
+    }
+  };
+
+  const handleClearExportKey = async () => {
+    if (!confirm('แน่ใจที่จะลบ Export Key? GitHub Actions จะใช้งาน Auto-Sync ไม่ได้')) return;
+    try {
+      const res = await fetch('/api/settings/db-export-key', { method: 'DELETE' });
+      if (res.ok) {
+        setMessage({ type: 'info', text: '✅ ลบ Export Key เรียบร้อย' });
+        setNewExportKey('');
+        await fetchExportKeyStatus();
+      }
+    } catch { /* ignore */ }
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* ignore */ }
   };
 
   const handleSave = async () => {
@@ -239,6 +313,111 @@ export default function DatabaseSettingsPage() {
           )}
           {saving ? 'กำลังบันทึกและทดสอบการเชื่อมต่อ...' : '💾 บันทึกและทดสอบการเชื่อมต่อ'}
         </button>
+      </div>
+
+      {/* Export Key Section */}
+      <div className="p-6 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl space-y-4">
+        <h2 className="text-sm font-bold text-slate-200 flex items-center gap-2">
+          <KeyRound className="w-4 h-4 text-amber-400" />
+          ตั้งค่า Auto-Sync Key (DB_EXPORT_KEY)
+        </h2>
+        <p className="text-xs text-slate-400 leading-relaxed">
+          นี่คือคีย์ที่ GitHub Actions ใช้เรียก API เพื่อ Export ข้อมูลจากระบบทุก 5 นาที
+          <br />
+          กำหนดคีย์ให้ตรงกับค่าใน <strong>GitHub → Settings → Secrets and variables → Actions → DB_EXPORT_KEY</strong>
+        </p>
+
+        {/* Status */}
+        <div className={`p-3 rounded-xl border text-xs font-medium ${
+          exportKeyStatus?.hasExportKey
+            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+            : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+        }`}>
+          {exportKeyStatus?.hasExportKey 
+            ? `✅ ตั้งค่า Key แล้ว (source: ${exportKeyStatus.source === 'environment' ? 'Render Environment' : 'ระบบ'})`
+            : '⚠️ ยังไม่ได้ตั้งค่า Export Key — Auto-Sync จะไม่สามารถทำงานได้'}
+        </div>
+
+        {/* Generate/Set Key */}
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <input
+                type={showExportKey ? 'text' : 'password'}
+                value={newExportKey}
+                onChange={(e) => setNewExportKey(e.target.value)}
+                placeholder="พิมพ์คีย์หรือกด 'สร้างคีย์ใหม่'..."
+                className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500 pr-24 font-mono text-xs"
+              />
+              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-1">
+                {newExportKey && (
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(newExportKey)}
+                    className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded-lg"
+                    title="คัดลอก"
+                  >
+                    {copied ? <CheckCheck className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowExportKey(!showExportKey)}
+                  className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded-lg"
+                  title={showExportKey ? 'ซ่อน' : 'แสดง'}
+                >
+                  {showExportKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={generateSecureKey}
+              className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-semibold text-slate-300 transition-all flex items-center gap-2"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              สร้างคีย์ใหม่
+            </button>
+
+            <button
+              onClick={handleSaveExportKey}
+              disabled={savingExportKey || !newExportKey.trim()}
+              className="flex-1 py-2.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-amber-600/30 disabled:opacity-50 transition-all"
+            >
+              {savingExportKey ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Save className="w-3.5 h-3.5" />
+              )}
+              {savingExportKey ? 'กำลังบันทึก...' : '💾 บันทึกคีย์'}
+            </button>
+
+            {exportKeyStatus?.hasExportKey && exportKeyStatus.source === 'config' && (
+              <button
+                onClick={handleClearExportKey}
+                className="px-4 py-2.5 bg-rose-900/30 hover:bg-rose-800/30 border border-rose-500/30 rounded-xl text-xs font-semibold text-rose-300 transition-all flex items-center gap-2"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                ลบ
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Step-by-step instructions */}
+        <div className="p-4 bg-indigo-950/30 border border-indigo-500/20 rounded-xl text-xs text-indigo-200/70 space-y-2">
+          <p className="text-indigo-300 font-semibold text-[11px]">📋 วิธีตั้งค่า GitHub Secret ให้ตรงกัน:</p>
+          <ol className="list-decimal list-inside space-y-1">
+            <li>กด <strong>"สร้างคีย์ใหม่"</strong> ข้างบน → คีย์จะถูกสร้างให้อัตโนมัติ</li>
+            <li>กด <strong>"💾 บันทึกคีย์"</strong> เพื่อบันทึกคีย์นี้ในระบบ</li>
+            <li>กดปุ่ม <Copy className="w-3 h-3 inline" /> เพื่อคัดลอกคีย์</li>
+            <li>ไปที่ <strong>GitHub → Repository → Settings → Secrets and variables → Actions</strong></li>
+            <li>กด <strong>New repository secret</strong> → Name: <code className="text-indigo-300">DB_EXPORT_KEY</code> → Value: วางคีย์ที่คัดลอกมา</li>
+            <li>Auto-Sync จะเริ่มทำงานภายใน 5 นาที! 🎉</li>
+          </ol>
+        </div>
       </div>
 
       {/* Quick Actions */}
