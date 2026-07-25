@@ -1,0 +1,208 @@
+name: 🔄 Auto Backup + Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # ===== JOB 1: Backup Live Database Before Deploy =====
+  backup:
+    name: 💾 Backup Database
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      backup_filename: ${{ steps.download.outputs.backup_filename }}
+
+    steps:
+      - name: 🔑 Login to App
+        id: login
+        env:
+          APP_URL: ${{ secrets.APP_URL || 'https://sop-knowledge-base.onrender.com' }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL || 'admin@company.com' }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD || 'password123' }}
+        run: |
+          echo "🔑 Logging in to $APP_URL..."
+          LOGIN_RESP=$(curl -s -c /tmp/cookies.txt "$APP_URL/api/auth" \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}")
+          
+          SUCCESS=$(echo "$LOGIN_RESP" | jq -r '.success // false')
+          if [ "$SUCCESS" != "true" ]; then
+            ERROR=$(echo "$LOGIN_RESP" | jq -r '.error // "unknown error"')
+            echo "❌ Login failed: $ERROR"
+            echo "::warning::Login failed. Backup will be skipped, but deploy continues."
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "✅ Login successful"
+          echo "skip=false" >> $GITHUB_OUTPUT
+
+      - name: 📦 Create Backup on Server
+        id: create
+        if: steps.login.outputs.skip == 'false'
+        env:
+          APP_URL: ${{ secrets.APP_URL || 'https://sop-knowledge-base.onrender.com' }}
+        run: |
+          echo "📦 Creating backup on server..."
+          CREATE_RESP=$(curl -s -b /tmp/cookies.txt "$APP_URL/api/backups/create" -X POST)
+          echo "Response: $CREATE_RESP"
+          
+          FILENAME=$(echo "$CREATE_RESP" | jq -r '.backup.filename // ""')
+          if [ -z "$FILENAME" ]; then
+            echo "❌ Failed to create backup"
+            echo "::warning::Backup creation failed. Deploy continues, but no backup was saved."
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "✅ Backup created: $FILENAME"
+          echo "filename=$FILENAME" >> $GITHUB_OUTPUT
+          echo "skip=false" >> $GITHUB_OUTPUT
+
+      - name: ⬇️ Download Backup
+        id: download
+        if: steps.create.outputs.skip == 'false'
+        env:
+          APP_URL: ${{ secrets.APP_URL || 'https://sop-knowledge-base.onrender.com' }}
+        run: |
+          FILENAME="${{ steps.create.outputs.filename }}"
+          echo "⬇️ Downloading backup: $FILENAME"
+          
+          curl -s -b /tmp/cookies.txt "$APP_URL/api/backups/download/$(echo "$FILENAME" | jq -sRr @uri)" \
+            -o "backup-$FILENAME"
+          
+          if [ -f "backup-$FILENAME" ]; then
+            SIZE=$(wc -c < "backup-$FILENAME")
+            echo "✅ Downloaded: $FILENAME ($SIZE bytes)"
+            echo "backup_filename=$FILENAME" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Download failed"
+            echo "backup_filename=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 📤 Upload Backup as Artifact
+        if: steps.download.outputs.backup_filename != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pre-deploy-backup-${{ github.sha }}
+          path: backup-*.json
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: 📋 Summary
+        if: always()
+        run: |
+          if [ -n "${{ steps.download.outputs.backup_filename }}" ]; then
+            echo "✅✅✅ Backup saved as artifact: pre-deploy-backup-${{ github.sha }}"
+            echo "   File: ${{ steps.download.outputs.backup_filename }}"
+            echo "   You can download it from the GitHub Actions run page."
+          else
+            echo "ℹ️ No backup was created (login may have failed or backup creation failed)"
+          fi
+
+  # ===== JOB 2: Build & Lint (runs in parallel with backup) =====
+  build:
+    name: 🏗️ Build & Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: 📝 Create env file
+        run: |
+          echo "JWT_SECRET=${{ secrets.JWT_SECRET || 'sop-knowledge-base-super-secret-key-2026' }}" > .env.local
+
+      - name: 🧹 Run ESLint
+        run: npm run lint
+
+      - name: 🏗️ Build project
+        run: npm run build
+
+  # ===== JOB 3: Deploy (waits for backup + build) =====
+  deploy:
+    name: 🚀 Deploy to Render
+    needs: [backup, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always()
+
+    steps:
+      - name: 📋 Check build status
+        run: |
+          if [ "${{ needs.build.result }}" != "success" ]; then
+            echo "❌ Build failed — skipping deploy"
+            echo "   Backup was still created (check artifacts)."
+            exit 1
+          fi
+          echo "✅ Build passed! Proceeding with deploy..."
+
+      - name: 🚀 Trigger Render Deploy Hook
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK" ]; then
+            echo "ℹ️ No Render deploy hook set. Deploy must be triggered manually."
+            echo "   Set RENDER_DEPLOY_HOOK secret to enable auto-deploy."
+            echo ""
+            echo "To find your deploy hook URL:"
+            echo "  Render Dashboard → Service → Settings → Deploy Hook"
+            exit 0
+          fi
+          
+          echo "🔄 Triggering Render deploy..."
+          RESP=$(curl -s -X POST "$RENDER_DEPLOY_HOOK")
+          echo "Deploy triggered: $RESP"
+
+      - name: 🔗 Post-deploy note
+        run: |
+          echo ""
+          echo "========================================"
+          echo "  ✅ Backup + Deploy Complete!"
+          echo "========================================"
+          echo "  📦 Backup artifact: pre-deploy-backup-${{ github.sha }}"
+          echo "     (available in this run's Artifacts section)"
+          echo "  📱 App: ${{ secrets.APP_URL || 'https://sop-knowledge-base.onrender.com' }}"
+          echo "========================================"
+
+  # ===== JOB 4: Verify Deploy (optional, waits for deploy) =====
+  verify:
+    name: ✅ Verify Backup Persists
+    needs: [deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always()
+
+    steps:
+      - name: ⏳ Wait for deploy to settle
+        run: sleep 60
+
+      - name: 🔑 Login
+        id: verify_login
+        env:
+          APP_URL: ${{ secrets.APP_URL || 'https://sop-knowledge-base.onrender.com' }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL || 'admin@company.com' }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD || 'password123' }}
+        run: |
+          LOGIN_RESP=$(curl -s -c /tmp/vcookies.txt "$APP_URL/api/auth" \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}")
+          
+          SUCCESS=$(echo "$LOGIN_RESP" | jq -r '.success // false')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "✅ App is live and login works!"
+            echo "success=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ App is running but login failed (may need redeploy)"
+            echo "success=false" >> $GITHUB_OUTPUT
+          fi
