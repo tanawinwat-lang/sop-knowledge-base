@@ -20,6 +20,7 @@ import {
   Paperclip,
   FileText,
   Trash2,
+  Users,
 } from 'lucide-react';
 
 interface Comment {
@@ -104,6 +105,11 @@ export default function AnnouncementsPage() {
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Acknowledgment viewer — show list of users who acknowledged
+  const [ackTarget, setAckTarget] = useState<{ id: number; title: string } | null>(null);
+  const [ackList, setAckList] = useState<any[]>([]);
+  const [loadingAcks, setLoadingAcks] = useState(false);
+
   const filtered = searchQuery.trim()
     ? announcements.filter(
         (a) =>
@@ -174,6 +180,19 @@ export default function AnnouncementsPage() {
       }
     } catch {} finally {
       setIsSubmittingComment(false);
+    }
+  };
+
+  const openAcknowledgments = async (id: number, title: string) => {
+    setAckTarget({ id, title });
+    setLoadingAcks(true);
+    setAckList([]);
+    try {
+      const res = await fetch(`/api/announcements/${id}/acknowledgments`);
+      const data = await res.json();
+      if (res.ok) setAckList(data.acknowledgments || []);
+    } catch {} finally {
+      setLoadingAcks(false);
     }
   };
 
@@ -471,6 +490,13 @@ export default function AnnouncementsPage() {
                   <MessageSquare className="w-3.5 h-3.5" />
                   ความคิดเห็น ({ann.commentCount})
                 </button>
+                <button
+                  onClick={() => openAcknowledgments(ann.id, ann.title)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 rounded-lg transition-colors"
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  ผู้รับทราบ
+                </button>
                 {canDelete && (
                   <button
                     onClick={() => setDeleteTarget(ann.id)}
@@ -630,6 +656,102 @@ export default function AnnouncementsPage() {
               >
                 {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                 {isDeleting ? 'กำลังลบ...' : 'ยืนยันการลบ'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Acknowledgment Viewer Modal */}
+      {ackTarget !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200" onClick={() => { setAckTarget(null); setAckList([]); }}>
+          <div
+            className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden max-h-[75vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-2 rounded-xl bg-indigo-500/20">
+                  <Users className="w-4 h-4 text-indigo-400" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-slate-100 truncate">ผู้รับทราบประกาศ</h3>
+                  <p className="text-[10px] text-slate-500 truncate">{ackTarget.title}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => { setAckTarget(null); setAckList([]); }}
+                className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 flex-shrink-0"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content - list of users */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {loadingAcks ? (
+                <div className="py-10 text-center text-slate-400">
+                  <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />
+                  <span className="text-xs">กำลังโหลด...</span>
+                </div>
+              ) : ackList.length === 0 ? (
+                <div className="py-10 text-center text-slate-400">
+                  <Users className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                  <p className="text-xs">ยังไม่มีผู้รับทราบประกาศนี้</p>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between px-1 mb-2">
+                    <span className="text-[10px] text-slate-500 font-medium">
+                      รับทราบแล้ว {ackList.length} คน
+                    </span>
+                  </div>
+                  {ackList.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className="flex items-center justify-between p-3 bg-slate-800/50 rounded-xl border border-slate-700/50 hover:border-slate-600/50 transition-colors"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500/30 to-purple-500/30 border border-indigo-500/30 flex items-center justify-center flex-shrink-0">
+                          <span className="text-xs font-bold text-indigo-300">
+                            {entry.username?.charAt(0).toUpperCase() || '?'}
+                          </span>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-slate-200 truncate">{entry.username}</p>
+                          <p className="text-[10px] text-slate-500 truncate">{entry.email}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className="px-2 py-0.5 text-[9px] font-bold rounded-full bg-slate-700/60 text-slate-400 border border-slate-600/50 whitespace-nowrap">
+                          {entry.role || '-'}
+                        </span>
+                        <span className="text-[10px] text-slate-500 whitespace-nowrap">
+                          {new Date(entry.read_at).toLocaleDateString('th-TH', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3 border-t border-slate-800 flex justify-between items-center">
+              <span className="text-[10px] text-slate-500">
+                {!loadingAcks && `${ackList.length} คน`}
+              </span>
+              <button
+                onClick={() => { setAckTarget(null); setAckList([]); }}
+                className="px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+              >
+                ปิด
               </button>
             </div>
           </div>

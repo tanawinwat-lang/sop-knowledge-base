@@ -480,6 +480,38 @@
       "can_access": false,
       "can_write": false,
       "can_delete": false
+    },
+    {
+      "id": 53,
+      "role_id": 1,
+      "page_route": "/announcements/acknowledgments",
+      "can_access": true,
+      "can_write": false,
+      "can_delete": false
+    },
+    {
+      "id": 54,
+      "role_id": 2,
+      "page_route": "/announcements/acknowledgments",
+      "can_access": true,
+      "can_write": false,
+      "can_delete": false
+    },
+    {
+      "id": 55,
+      "role_id": 3,
+      "page_route": "/announcements/acknowledgments",
+      "can_access": true,
+      "can_write": false,
+      "can_delete": false
+    },
+    {
+      "id": 56,
+      "role_id": 4,
+      "page_route": "/announcements/acknowledgments",
+      "can_access": false,
+      "can_write": false,
+      "can_delete": false
     }
   ],
   "categories": [

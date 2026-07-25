@@ -1081,7 +1081,7 @@ function tryRecoverFromBackup(): DBData | null {
 }
 
 // All pages/routes in the system
-const ALL_ROUTES = ['/dashboard', '/sops', '/sops/new', '/sops/trash', '/approval', '/feedback', '/announcements', '/settings/password', '/settings/users', '/settings/permissions', '/settings/backups', '/settings/audit-logs', '/settings/database'];
+const ALL_ROUTES = ['/dashboard', '/sops', '/sops/new', '/sops/trash', '/approval', '/feedback', '/announcements', '/announcements/acknowledgments', '/settings/password', '/settings/users', '/settings/permissions', '/settings/backups', '/settings/audit-logs', '/settings/database'];
 
 // Track the current PG sync promise so ensurePersisted() can await it
 let _currentSyncPromise: Promise<boolean> | null = null;

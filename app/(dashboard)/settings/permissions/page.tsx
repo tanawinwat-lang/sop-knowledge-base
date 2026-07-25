@@ -5,7 +5,7 @@ import {
   ShieldCheck, Save, Check, Folder, Lock, BookOpen, LayoutDashboard,
   FileCheck, MessageSquareWarning, Users, History, Bell, KeyRound,
   FilePlus, Trash2, Eye, Edit3, Trash, X, ChevronDown, Search, UsersRound,
-  HardDrive
+  HardDrive, CheckCheck
 } from 'lucide-react';
 
 // Route-to-Thai-name mapping
@@ -17,6 +17,7 @@ const routeLabels: Record<string, { label: string; group: string; icon: any }> =
   '/approval':       { label: 'รออนุมัติ SOP', group: '📖 SOP', icon: FileCheck },
   '/feedback':       { label: 'ข้อเสนอแนะ SOP', group: '📖 SOP', icon: MessageSquareWarning },
   '/announcements':  { label: 'ประกาศข่าวสาร', group: '📢 ประกาศ', icon: Bell },
+  '/announcements/acknowledgments': { label: 'รายงานผู้รับทราบประกาศ', group: '📢 ประกาศ', icon: CheckCheck },
   '/settings/password':    { label: 'ตั้งค่ารหัสผ่าน', group: '🔐 จัดการบัญชีผู้ใช้', icon: KeyRound },
   '/settings/users':       { label: 'จัดการผู้ใช้งาน & ตำแหน่ง', group: '🔐 จัดการบัญชีผู้ใช้', icon: Users },
   '/settings/permissions': { label: 'จัดการสิทธิ์ระบบ (RBAC)', group: '🔐 จัดการบัญชีผู้ใช้', icon: ShieldCheck },
