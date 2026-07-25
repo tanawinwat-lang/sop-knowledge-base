@@ -490,6 +490,11 @@ function getInitialSeedData(): DBData {
     { id: 37, role_id: 1, page_route: '/settings/database', can_access: true, can_write: true, can_delete: true },
     { id: 38, role_id: 2, page_route: '/settings/database', can_access: false, can_write: false, can_delete: false },
     { id: 39, role_id: 3, page_route: '/settings/database', can_access: false, can_write: false, can_delete: false },
+
+    // Announcement Acknowledgments — Admin full, Supervisor read, Agent none
+    { id: 40, role_id: 1, page_route: '/announcements/acknowledgments', can_access: true, can_write: true, can_delete: true },
+    { id: 41, role_id: 2, page_route: '/announcements/acknowledgments', can_access: true, can_write: false, can_delete: false },
+    { id: 42, role_id: 3, page_route: '/announcements/acknowledgments', can_access: false, can_write: false, can_delete: false },
   ];
 
   const categories: Category[] = [
@@ -861,6 +866,8 @@ export function getDB(): DBData {
               canAccess = isPrivileged; canWrite = isPrivileged;
             } else if (route === '/announcements') {
               canAccess = true; canWrite = isPrivileged;
+            } else if (route === '/announcements/acknowledgments') {
+              canAccess = isPrivileged; // Admin + Supervisor only, Agent denied by default
             } else if (route === '/settings/database') {
               canAccess = isAdmin; canWrite = isAdmin; canDelete = isAdmin;
             } else if (route === '/settings/password') {
