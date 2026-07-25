@@ -881,13 +881,11 @@ export function getDB(): DBData {
 
   dbCache = data;
 
-  // AUTO-SYNC: Fire-and-forget sync to PostgreSQL immediately on load
-      // IMPORTANT: Only sync if data has CUSTOM entries (not just seed).
-      // This prevents overwriting PG data with stale file data on cold start
-      // when async PG load hasn't completed yet.
-      if (data.users.length > 3 || data.sops.length > 4 || data.announcements.length > 2) {
-        syncToPostgreSQL(data);
-      }
+  // 🔄 AUTO-SYNC: Fire-and-forget sync to PostgreSQL immediately on every load
+      // This ensures every getDB() call syncs the latest data to Neon.
+      // The users.length > 0 guard (added in the race-condition fix) already prevents
+      // overwriting PG with empty/seed data when async PG load hasn't completed yet.
+      syncToPostgreSQL(data);
 
       return data;
     } catch (readError) {
@@ -1203,7 +1201,7 @@ export function syncToPostgreSQL(data: DBData): void {
  * Prevents data loss on crash by keeping PG relatively up-to-date.
  */
 let _periodicSyncStarted = false;
-const PERIODIC_SYNC_INTERVAL_MS = 60_000; // 60 seconds
+const PERIODIC_SYNC_INTERVAL_MS = 15_000; // 15 seconds — sync every 15s for maximum safety
 
 export function startPeriodicPGSync(): void {
   if (_periodicSyncStarted || !hasDBUrl()) return;
