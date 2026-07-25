@@ -905,12 +905,19 @@ export function getDB(): DBData {
     // Try 1: Sync load (child_process.execFileSync)
     const syncData = loadDBFromPostgresSync();
     if (syncData) {
-      console.log('[DB] Loaded from PostgreSQL (sync)');
-      migrateData(syncData);
-      initMaxIds(syncData);
-      dbCache = syncData;
-      fs.writeFileSync(DB_FILE, JSON.stringify(syncData, null, 2), 'utf-8');
-      return syncData;
+      // ⚡ IMPORTANT: PG might have an empty snapshot (0 users) from a previous
+      // deploy that synced empty/seed data. Treat empty data as "no data" and
+      // fall through to seed — otherwise users can't login.
+      if (syncData.users.length === 0) {
+        console.log('[DB] PG sync load returned 0 users — treating as empty, falling to seed');
+      } else {
+        console.log('[DB] Loaded from PostgreSQL (sync) with', syncData.users.length, 'users');
+        migrateData(syncData);
+        initMaxIds(syncData);
+        dbCache = syncData;
+        fs.writeFileSync(DB_FILE, JSON.stringify(syncData, null, 2), 'utf-8');
+        return syncData;
+      }
     }
     
     // Try 2: Wait for eager PG load (module-level async, pool already connecting)
@@ -944,25 +951,30 @@ export function getDB(): DBData {
     }
     
     if (_pgEagerLoaded && _pgEagerData) {
-      // 🎯 Found PG data via eager load — use it!
-      console.log('[DB] Loaded from PostgreSQL (eager async) with', 
-        _pgEagerData.users.length, 'users,', _pgEagerData.sops.length, 'SOPs');
-      migrateData(_pgEagerData);
-      initMaxIds(_pgEagerData);
-      dbCache = _pgEagerData;
-      if (FS_WRITABLE) {
-        fs.writeFileSync(DB_FILE, JSON.stringify(_pgEagerData, null, 2), 'utf-8');
+      if (_pgEagerData.users.length === 0) {
+        console.log('[DB] Eager PG load returned 0 users — treating as empty, falling to seed');
+      } else {
+        // 🎯 Found PG data via eager load — use it!
+        console.log('[DB] Loaded from PostgreSQL (eager async) with', 
+          _pgEagerData.users.length, 'users,', _pgEagerData.sops.length, 'SOPs');
+        migrateData(_pgEagerData);
+        initMaxIds(_pgEagerData);
+        dbCache = _pgEagerData;
+        if (FS_WRITABLE) {
+          fs.writeFileSync(DB_FILE, JSON.stringify(_pgEagerData, null, 2), 'utf-8');
+        }
+        return _pgEagerData;
       }
-      return _pgEagerData;
     }
 
     // Try 3: Async fallback (fire-and-forget, cache replaced when ready)
+    // Also checks users.length === 0 to avoid overwriting with empty snapshot
     if (!_pgLoadStarted) {
       _pgLoadStarted = true;
       initializePostgresDB()
         .then(() => loadDBFromPostgres())
         .then((pgData) => {
-          if (pgData) {
+          if (pgData && pgData.users.length > 0) {
             migrateData(pgData);
             _maxIdInitialized = false;
             initMaxIds(pgData);
@@ -980,7 +992,7 @@ export function getDB(): DBData {
               }
             }
           } else {
-            console.log('[DB] No data found in PostgreSQL — seed was correct fallback');
+            console.log('[DB] No valid data found in PostgreSQL — seed was correct fallback');
           }
         })
         .catch(e => console.error('[DB] PG async load failed:', e));
