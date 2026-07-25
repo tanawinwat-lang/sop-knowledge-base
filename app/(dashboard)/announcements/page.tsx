@@ -51,6 +51,7 @@ export default function AnnouncementsPage() {
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [userRole, setUserRole] = useState<string>('AGENT');
+  const [canViewAcks, setCanViewAcks] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Create announcement dialog
@@ -94,7 +95,20 @@ export default function AnnouncementsPage() {
     fetch('/api/auth')
       .then((r) => r.json())
       .then((d) => {
-        if (d.user) setUserRole(d.user.role_name);
+        if (d.user) {
+          setUserRole(d.user.role_name);
+          // 🔐 Check page permission for acknowledgments feature
+          fetch('/api/permissions')
+            .then((r) => r.json())
+            .then((p) => {
+              const perms = (p.page_permissions || []) as any[];
+              const ackPerm = perms.find(
+                (perm: any) => perm.role_id === d.user.role_id && perm.page_route === '/announcements/acknowledgments'
+              );
+              setCanViewAcks(ackPerm ? ackPerm.can_access : false);
+            })
+            .catch(() => {});
+        }
       });
   }, [fetchAnnouncements]);
 
@@ -490,13 +504,15 @@ export default function AnnouncementsPage() {
                   <MessageSquare className="w-3.5 h-3.5" />
                   ความคิดเห็น ({ann.commentCount})
                 </button>
-                <button
-                  onClick={() => openAcknowledgments(ann.id, ann.title)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 rounded-lg transition-colors"
-                >
-                  <Users className="w-3.5 h-3.5" />
-                  ผู้รับทราบ
-                </button>
+                {canViewAcks && (
+                  <button
+                    onClick={() => openAcknowledgments(ann.id, ann.title)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 rounded-lg transition-colors"
+                  >
+                    <Users className="w-3.5 h-3.5" />
+                    ผู้รับทราบ
+                  </button>
+                )}
                 {canDelete && (
                   <button
                     onClick={() => setDeleteTarget(ann.id)}

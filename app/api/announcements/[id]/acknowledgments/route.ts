@@ -1,11 +1,17 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { getDB } from '@/lib/db';
+import { canAccessPage } from '@/lib/rbac';
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  // 🔐 RBAC check: only users with permission can view acknowledgments
+  if (!canAccessPage(user.role_id, '/announcements/acknowledgments')) {
+    return NextResponse.json({ error: 'คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้' }, { status: 403 });
+  }
 
   const announcementId = parseInt(id, 10);
   const db = getDB();
