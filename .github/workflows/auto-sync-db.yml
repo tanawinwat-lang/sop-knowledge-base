@@ -1,0 +1,83 @@
+name: 🔄 Auto-Sync Database (every 5 min)
+
+on:
+  schedule:
+    # Every 5 minutes
+    - cron: '*/5 * * * *'
+  workflow_dispatch: # Manual trigger
+
+jobs:
+  sync-db:
+    name: Sync database.json from production
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Export database from production (API key)
+        run: |
+          DB_EXPORT_KEY="${{ secrets.DB_EXPORT_KEY }}"
+          RENDER_URL="${{ vars.RENDER_URL || 'https://sop-knowledge-base.onrender.com' }}"
+
+          if [ -z "$DB_EXPORT_KEY" ]; then
+            echo "❌ DB_EXPORT_KEY secret not set!"
+            echo "Set it in GitHub → Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+
+          echo "✅ Exporting database from $RENDER_URL..."
+
+          # Export full database using API key
+          curl -s --max-time 30 \
+            "$RENDER_URL/api/db/export?key=$DB_EXPORT_KEY" \
+            -o /tmp/db_export.json
+
+          # Validate the export
+          USERS=$(python3 -c "import json; d=json.load(open('/tmp/db_export.json')); print(d['stats']['users'])" 2>/dev/null || echo "0")
+          if [ "$USERS" -gt 0 ]; then
+            echo "✅ Exported $USERS users from production"
+
+            # Extract just the 'data' field (the full DB)
+            python3 -c "
+import json
+d = json.load(open('/tmp/db_export.json'))
+with open('data/database.json', 'w', encoding='utf-8') as f:
+    json.dump(d['data'], f, ensure_ascii=False, indent=2)
+print('✅ Written to data/database.json')
+" 2>&1
+          else
+            echo "❌ Export returned 0 users, skipping update"
+            cat /tmp/db_export.json | head -c 500
+            exit 1
+          fi
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "Auto-Sync Bot"
+          git config user.email "bot@sop-knowledge-base.app"
+
+          git add data/database.json
+
+          if git diff --cached --quiet; then
+            echo "✅ No changes — database is already up to date"
+          else
+            git commit -m "🔄 auto-sync: update database.json from production ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+            git push origin main
+            echo "✅ Pushed updated database.json"
+          fi
+
+      - name: Trigger Render deploy
+        if: success()
+        run: |
+          # Use Render Deploy Hook if available
+          RENDER_HOOK="${{ secrets.RENDER_DEPLOY_HOOK }}"
+          if [ -n "$RENDER_HOOK" ]; then
+            curl -s --max-time 10 -X POST "$RENDER_HOOK"
+            echo "✅ Render deploy triggered"
+          else
+            echo "ℹ️ No RENDER_DEPLOY_HOOK secret set — deploy manually if needed"
+          fi
