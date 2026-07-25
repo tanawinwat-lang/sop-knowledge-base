@@ -1,3 +1,4 @@
+// TODO: REMOVE AFTER DEBUGGING — temporary diagnostic endpoint
 import { NextResponse } from 'next/server';
 import { getDB } from '@/lib/db';
 import bcrypt from 'bcryptjs';
@@ -15,10 +16,10 @@ export async function GET() {
       ok: true,
       users_count: db.users.length,
       sops_count: db.sops.length,
+      is_seed_data: db.users.length === 3 && !db.users.find(u => u.email !== 'admin@company.com' && u.email !== 'sup@company.com' && u.email !== 'agent@company.com'),
       admin_exists: !!admin,
       admin_hash_matches_seed: admin ? admin.password_hash === SEED_HASH : false,
       admin_login_works: admin ? bcrypt.compareSync('password123', admin.password_hash) : false,
-      all_users: db.users.map(u => ({ id: u.id, email: u.email, role_id: u.role_id })),
     });
   } catch (err: any) {
     return NextResponse.json({ ok: false, error: err.message }, { status: 500 });
