@@ -1038,6 +1038,12 @@ function tryRecoverFromBackup(): DBData | null {
 // All pages/routes in the system
 const ALL_ROUTES = ['/dashboard', '/sops', '/sops/new', '/sops/trash', '/approval', '/feedback', '/announcements', '/settings/password', '/settings/users', '/settings/permissions', '/settings/backups', '/settings/audit-logs', '/settings/database'];
 
+// Track the current PG sync promise so ensurePersisted() can await it
+let _currentSyncPromise: Promise<boolean> | null = null;
+
+// GlobalThis key for db-context to access the promise without circular dep
+const SYNC_PROMISE_KEY = '__db_current_sync_promise__';
+
 export function saveDB(data: DBData): void {
   // Dual-write: always write to file (if writable) + PG (if available)
   if (FS_WRITABLE) {
@@ -1049,35 +1055,50 @@ export function saveDB(data: DBData): void {
     fs.renameSync(tmpFile, DB_FILE);
   }
   if (hasDBUrl()) {
-    // Retry PG sync up to 3 times if it fails (handles Neon cold start)
-    const retrySync = (attempt: number) => {
-      saveDBToPostgres(data)
-        .then((saved) => {
-          if (saved) {
-            data.db_config = data.db_config || {};
-            data.db_config.last_sync_at = new Date().toISOString();
-            data.db_config.pg_connected = true;
-          } else if (attempt < 3) {
-            console.log(`[DB] PG sync attempt ${attempt} failed, retrying in 2s...`);
-            setTimeout(() => retrySync(attempt + 1), 2000);
-          } else {
-            console.error('[DB] PG sync failed after 3 attempts');
-            if (data.db_config) data.db_config.pg_connected = false;
-          }
-        })
-        .catch((err) => {
-          if (attempt < 3) {
-            console.log(`[DB] PG sync error (${err.message}), retrying in 2s...`);
-            setTimeout(() => retrySync(attempt + 1), 2000);
-          } else {
-            console.error('[DB] PG sync failed after 3 attempts:', err);
-            if (data.db_config) data.db_config.pg_connected = false;
-          }
-        });
-    };
-    retrySync(1);
+    // Store the PG sync promise so ensurePersisted() can await it synchronously
+    // This prevents data loss when a deploy happens right after a save
+    _currentSyncPromise = new Promise<boolean>((resolve) => {
+      const retrySync = (attempt: number) => {
+        saveDBToPostgres(data)
+          .then((saved) => {
+            if (saved) {
+              data.db_config = data.db_config || {};
+              data.db_config.last_sync_at = new Date().toISOString();
+              data.db_config.pg_connected = true;
+            } else if (attempt < 3) {
+              console.log(`[DB] PG sync attempt ${attempt} failed, retrying in 2s...`);
+              setTimeout(() => retrySync(attempt + 1), 2000);
+              return;
+            } else {
+              console.error('[DB] PG sync failed after 3 attempts');
+              if (data.db_config) data.db_config.pg_connected = false;
+            }
+            resolve(saved);
+          })
+          .catch((err) => {
+            if (attempt < 3) {
+              console.log(`[DB] PG sync error (${err.message}), retrying in 2s...`);
+              setTimeout(() => retrySync(attempt + 1), 2000);
+              return;
+            } else {
+              console.error('[DB] PG sync failed after 3 attempts:', err);
+              if (data.db_config) data.db_config.pg_connected = false;
+            }
+            resolve(false);
+          });
+      };
+      retrySync(1);
+    });
+    // Expose promise on globalThis for db-context (avoids circular import)
+    (globalThis as any)[SYNC_PROMISE_KEY] = _currentSyncPromise;
+    // Also call setPendingWrite so ensurePersisted() can detect and await
+    try { setPendingWrite(data); } catch { /* db-context may not be loaded yet */ }
   }
   dbCache = data;
+}
+
+export function getPendingSyncPromise(): Promise<boolean> | null {
+  return _currentSyncPromise;
 }
 
 export async function saveDBAsync(data: DBData): Promise<void> {
