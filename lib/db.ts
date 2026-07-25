@@ -238,7 +238,7 @@ function startEagerPGLoad(): void {
   initializePostgresDB()
     .then(() => loadDBFromPostgres())
     .then((data) => {
-      if (data) {
+      if (data && data.users.length > 0) {
         _pgEagerData = data;
         _pgEagerLoaded = true;
         console.log('[DB] Eager PG load completed (users:', data.users.length, 'sops:', data.sops.length, ')');
